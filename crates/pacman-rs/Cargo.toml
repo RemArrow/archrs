@@ -1,0 +1,14 @@
+[package]
+name = "pacman-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pacman-rs"
+path = "src/main.rs"
+
+[dependencies]
+alpm-rs = { path = "../alpm-rs" }
+anyhow.workspace = true
+libc = "0.2"

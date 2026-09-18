@@ -1,0 +1,26 @@
+[package]
+name = "coreutils-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "coreutils-rs"
+path = "src/main.rs"
+
+[dependencies]
+uucore = "0.12"
+uu_ls = "0.12"
+uu_cat = "0.12"
+uu_cp = "0.12"
+uu_mv = "0.12"
+uu_rm = "0.12"
+uu_mkdir = "0.12"
+uu_echo = "0.12"
+uu_pwd = "0.12"
+uu_true = "0.12"
+uu_false = "0.12"
+uu_touch = "0.12"
+uu_wc = "0.12"
+uu_head = "0.12"
+uu_tail = "0.12"

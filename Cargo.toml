@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/alpm-rs", "crates/pacman-rs", "crates/coreutils-rs"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }

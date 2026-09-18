@@ -177,11 +177,48 @@ rather than reinventing; adapt/vendor where sensible.
         library), scoped to basic scrolling/search rather than less's
         full feature set.
 
-### Phase 3 — init & service management
+### Phase 3 — init & service management (started)
 Arch uses systemd. A from-scratch Rust init is a huge surface (cgroups,
 dbus, unit files, udev). Realistic approach: scope down to a minimal
 Rust init for a custom "archrs" live image, not a systemd replacement
 for real installs.
+
+- [x] `archrs-init`: a minimal PID-1 binary. Mounts `/proc`, `/sys`,
+      `/dev` (after making the mount namespace's root private, so the
+      new mounts don't propagate back to whatever namespace it inherited
+      from — standard practice for any init/container-runtime doing this,
+      not archrs-specific). Spawns a fixed list of services from
+      `/etc/archrs-init.conf` (one command per line; `ARCHRS_INIT_CONF`
+      env var overrides the path, used for testing), falling back to
+      `/bin/sh` as a rescue shell if that file doesn't exist. Reaps every
+      child for as long as it runs — the part that's actually specific to
+      being PID 1: any process whose original parent exits first gets
+      reparented to init by the kernel, and without an unconditional
+      `waitpid(-1, ...)` loop those become permanent zombies the moment
+      they exit. SIGTERM/SIGINT trigger a teardown (SIGTERM to every
+      process in the namespace, a 500ms grace period, then SIGKILL) and
+      clean exit.
+      Verified for real as PID 1 — not just logically — using
+      `unshare --user --pid --mount --fork`, which gives an unprivileged
+      process a genuine fresh PID+mount namespace: confirmed a spawned
+      service that itself backgrounds a subprocess and exits immediately
+      (`(sleep 2 &); exit 0`) correctly reparents the orphaned `sleep` to
+      archrs-init, which reaps it ~2s later exactly as expected — the
+      orphan-reaping behavior that's the whole reason PID-1 code differs
+      from ordinary process supervision. Also confirmed SIGTERM-triggered
+      shutdown tears everything down and exits cleanly.
+      Known gap: mounting `/proc`/`/sys`/`/dev` itself couldn't be
+      verified in this environment — the sandboxed dev container's user
+      namespace returned EPERM for all three (likely a seccomp/LSM
+      restriction on the outer container, not a kernel limitation of
+      unprivileged user namespaces in general). The mount calls
+      themselves use the same flags and MS_PRIVATE-first sequencing real
+      init systems and container runtimes use, but this needs a real
+      boot or a more permissive sandbox to confirm.
+      Not implemented: real `reboot(2)`/`poweroff(2)` orchestration
+      (syncing and unmounting filesystems, actually power-cycling
+      hardware), service restart policies, and any dependency ordering
+      between services (everything spawns at once, in file order).
 
 ### Phase 4 — shell & base-devel toolchain
 bash replacement, makepkg equivalent, build tooling.

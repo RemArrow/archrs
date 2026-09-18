@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/alpm-rs", "crates/pacman-rs", "crates/coreutils-rs"]
+members = ["crates/alpm-rs", "crates/pacman-rs", "crates/coreutils-rs", "crates/archrs-init"]
 
 [workspace.package]
 version = "0.1.0"

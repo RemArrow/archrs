@@ -1,0 +1,13 @@
+[package]
+name = "archrs-init"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "archrs-init"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+nix = { version = "0.31", features = ["mount", "process", "signal"] }

@@ -451,6 +451,34 @@ bash replacement, makepkg equivalent, build tooling.
       Not implemented: context/normal diff formats, fuzzy matching for
       drifted line numbers, `-R` (reverse), `which -s` (silent).
 
+### Phase 5 — additional userland coverage (in progress)
+All four originally-planned phases are functionally complete (see above).
+This phase is what comes after: closing more real day-to-day gaps in
+`coreutils-rs`, following the same standard set throughout this project
+— vendor a real crate when one exists rather than hand-roll, verify
+against the real tool being replaced, document what's out of scope —
+rather than an exhaustive, fixed checklist the way Phases 1-4 were.
+
+- [x] `awk` — AWK is its own full programming language (patterns,
+      actions, control flow, user functions, associative arrays), so
+      this vendors `awk-rs` (a from-scratch AWK lexer/parser/
+      interpreter aiming for POSIX + gawk-extension compatibility)
+      rather than hand-rolling an interpreter. Its CLI logic lives only
+      in its own `main.rs`, not exposed as a callable library entry
+      point, so `awk_cmd.rs` re-implements that argument-parsing layer
+      over its public `Lexer`/`Parser`/`Interpreter` types.
+      Verified byte-identical against real GNU Awk 5.4.1 across: field
+      printing, `NF`, pattern-matched conditions, `BEGIN`/`END` with an
+      accumulator, `-F`, `-v`, stdin input, associative arrays with
+      `for...in`, `printf` field-width/precision formatting, string
+      functions (`length`/`substr`/`toupper`), user-defined functions,
+      and `gsub`.
+      Not separately audited beyond the above: the rest of `awk-rs`'s
+      own POSIX/gawk coverage claim (see its own README) — this is a
+      new, less battle-tested crate (0.2.0) compared to e.g. the
+      `uu_*`/`grep-*`/`findutils` crates this project otherwise leans
+      on, worth keeping in mind if something obscure misbehaves later.
+
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,
 most already upstream projects in their own languages) is not a software

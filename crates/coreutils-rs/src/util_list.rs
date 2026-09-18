@@ -134,4 +134,9 @@ const UTILS: &[(&str, &str)] = &[
     // PKGBUILDs commonly need.
     ("which", "archrs-native"),
     ("patch", "archrs-native"),
+    // Not base-devel-specific, just a real gap in everyday userland
+    // coverage: AWK is its own full programming language, so this
+    // vendors `awk-rs` (a from-scratch AWK lexer/parser/interpreter)
+    // rather than hand-rolling one.
+    ("awk", "archrs-native"),
 ];

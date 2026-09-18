@@ -159,12 +159,13 @@ rather than reinventing; adapt/vendor where sensible.
         way). Verified `find -name`/`-type` and `xargs` byte-identical
         against real GNU findutils.
   - [x] `tar` — GNU tar has no Rust port to vendor, so this is our own
-        thin CLI (`src/tar_cmd.rs`) over the `tar`/`flate2`/`zstd` crates
-        (the same libraries `alpm-rs` already uses for real package
-        archives). Covers `-c`/`-x`/`-t` with gzip/zstd compression,
-        both the old bundled-flag style (`tar xvf a.tar`) and normal
-        `-xvf`. Not implemented: bzip2/xz (no vendored crate yet),
-        incremental archives, extracting a subset of named members.
+        thin CLI (`src/tar_cmd.rs`) over the `tar`/`flate2`/`zstd`/
+        `bzip2`/`xz2` crates (the first three already used for real
+        package archives in `alpm-rs`; bzip2/xz support added in Phase
+        5, see below). Covers `-c`/`-x`/`-t` with gzip/bzip2/xz/zstd
+        compression, both the old bundled-flag style (`tar xvf a.tar`)
+        and normal `-xvf`. Not implemented: incremental archives,
+        extracting a subset of named members.
         Verified round-trip and cross-interop with real GNU tar in both
         directions (our archive → real tar extract, and vice versa),
         including `.tar.gz`. Known cosmetic gap: `-t` listing doesn't
@@ -498,6 +499,19 @@ rather than an exhaustive, fixed checklist the way Phases 1-4 were.
       byte-for-byte.
       Not implemented: `--data-urlencode`, cookies, `.netrc`, HTTP/2,
       client certificates.
+- [x] `tar`: bzip2 (`-j`) and xz (`-J`) compression, completing the
+      archive-format coverage real PKGBUILDs actually use (alongside
+      gzip/zstd from Phase 2) — closes a real gap `makepkg-rs`'s own
+      source extraction had. Vendors `bzip2`/`xz2` (bindings to the
+      system `libbz2`/`liblzma`), the same pragmatic choice as `zstd`
+      binding real `libzstd` elsewhere in this project, rather than a
+      pure-Rust reimplementation of either format.
+      Verified full bidirectional interop against real GNU tar for
+      both formats: an archive built by ours extracts correctly with
+      real tar, and an archive built by real tar extracts correctly
+      with ours (byte-identical file trees both ways), plus
+      extension-based auto-detection (`.tar.xz`/`.tar.bz2`) creating
+      the right format without an explicit `-J`/`-j` flag.
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

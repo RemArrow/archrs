@@ -4,11 +4,15 @@
 //! own separate upstream project, not part of `uutils/coreutils`.
 //!
 //! Scope: create (`-c`), extract (`-x`), and list (`-t`), with gzip
-//! (`-z`) and zstd (`--zstd`) compression, matching the common subset of
-//! real tar invocations (`tar -czvf out.tar.gz dir/`, `tar -xvf a.tar`).
-//! Not implemented: bzip2/xz (no vendored crate for either yet),
-//! incremental archives, sparse-file handling beyond what the `tar` crate
-//! itself does, and extracting a subset of named members.
+//! (`-z`), bzip2 (`-j`), xz (`-J`), and zstd (`--zstd`) compression,
+//! matching the common subset of real tar invocations
+//! (`tar -czvf out.tar.gz dir/`, `tar -xvf a.tar`). bzip2/xz vendor
+//! `bzip2`/`xz2` (bindings to the system `libbz2`/`liblzma`, the same
+//! pragmatic choice as `zstd` binding real `libzstd` elsewhere in this
+//! project) rather than a pure-Rust reimplementation of either format.
+//! Not implemented: incremental archives, sparse-file handling beyond
+//! what the `tar` crate itself does, and extracting a subset of named
+//! members.
 
 use std::ffi::OsString;
 use std::fs::File;
@@ -28,6 +32,8 @@ enum Compression {
     None,
     Gzip,
     Zstd,
+    Bzip2,
+    Xz,
 }
 
 struct Args {
@@ -45,6 +51,10 @@ fn sniff_compression(path: &Path) -> Compression {
         Compression::Gzip
     } else if name.ends_with(".tar.zst") || name.ends_with(".tzst") {
         Compression::Zstd
+    } else if name.ends_with(".tar.bz2") || name.ends_with(".tbz2") || name.ends_with(".tbz") {
+        Compression::Bzip2
+    } else if name.ends_with(".tar.xz") || name.ends_with(".txz") {
+        Compression::Xz
     } else {
         Compression::None
     }
@@ -82,6 +92,8 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                     't' => args.mode = Some(Mode::List),
                     'v' => args.verbose = true,
                     'z' => args.compression = Some(Compression::Gzip),
+                    'j' => args.compression = Some(Compression::Bzip2),
+                    'J' => args.compression = Some(Compression::Xz),
                     'f' => {
                         let path = iter.next().ok_or("-f requires an archive path")?;
                         args.archive = Some(PathBuf::from(path));
@@ -99,6 +111,8 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         match arg.as_str() {
             "--zstd" => args.compression = Some(Compression::Zstd),
             "--gzip" | "--gunzip" | "--ungzip" => args.compression = Some(Compression::Gzip),
+            "--bzip2" => args.compression = Some(Compression::Bzip2),
+            "--xz" => args.compression = Some(Compression::Xz),
             "--create" => args.mode = Some(Mode::Create),
             "--extract" | "--get" => args.mode = Some(Mode::Extract),
             "--list" => args.mode = Some(Mode::List),
@@ -125,6 +139,8 @@ fn open_reader(path: &Path, compression: Compression) -> io::Result<Box<dyn Read
         Compression::None => Box::new(file),
         Compression::Gzip => Box::new(flate2::read::GzDecoder::new(file)),
         Compression::Zstd => Box::new(zstd::Decoder::new(file)?),
+        Compression::Bzip2 => Box::new(bzip2::read::BzDecoder::new(file)),
+        Compression::Xz => Box::new(xz2::read::XzDecoder::new(file)),
     })
 }
 
@@ -137,6 +153,11 @@ fn open_writer(path: &Path, compression: Compression) -> io::Result<Box<dyn Writ
             flate2::Compression::default(),
         )),
         Compression::Zstd => Box::new(zstd::Encoder::new(file, 0)?.auto_finish()),
+        Compression::Bzip2 => Box::new(bzip2::write::BzEncoder::new(
+            file,
+            bzip2::Compression::default(),
+        )),
+        Compression::Xz => Box::new(xz2::write::XzEncoder::new(file, 6)),
     })
 }
 

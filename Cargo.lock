@@ -860,6 +860,7 @@ dependencies = [
  "magic",
  "minus",
  "patch-apply",
+ "ping",
  "procfs",
  "regex",
  "tar",
@@ -3232,6 +3233,17 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+
+[[package]]
+name = "ping"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7704264c7d31443a8dc10dcb3301457980be49b9e5bffef7a41fd0e7c0f4e823"
+dependencies = [
+ "rand 0.8.8",
+ "socket2",
+ "thiserror 2.0.20",
+]
 
 [[package]]
 name = "pkg-config"

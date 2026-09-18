@@ -152,4 +152,7 @@ const UTILS: &[(&str, &str)] = &[
     // `file`, built on real libmagic via FFI (the `magic` crate) —
     // see file_cmd.rs.
     ("file", "archrs-native"),
+    // `ping`, built on the `ping` crate's ICMP wire-protocol handling
+    // — see ping_cmd.rs.
+    ("ping", "archrs-native"),
 ];

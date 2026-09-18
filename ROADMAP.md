@@ -619,6 +619,29 @@ rather than an exhaustive, fixed checklist the way Phases 1-4 were.
       interpreter path and BuildID matched exactly), an HTML file, and
       `-i` MIME-type output.
       Not implemented: stdin (`-`), directory recursion, `--extension`.
+- [x] `ping` — vendors the `ping` crate for real ICMP echo request/
+      reply packet construction and matching (not something to
+      hand-roll on raw sockets), with our own CLI/loop around it.
+      Uses an unprivileged `DGRAM` ICMP socket (the crate's Linux
+      default) — no root/`CAP_NET_RAW` needed as long as
+      `net.ipv4.ping_group_range` permits it, the same mechanism real
+      `ping` uses to work unprivileged on modern Linux (confirmed
+      enabled system-wide on this machine before relying on it).
+      Real, deliberate behavior differences from real `ping`, not
+      bugs: no `ttl=` field (DGRAM sockets on Linux never see the
+      reply's IP header — the crate's own documented limitation), and
+      `-c COUNT` is *required* rather than optional, since real
+      ping's own default (run until Ctrl-C) is a poor fit for a
+      non-interactive dispatched command.
+      Verified for real, not just against localhost: `ping -c 3
+      127.0.0.1` got real replies with correct source/RTT; `ping -c 2
+      8.8.8.8` resolved and reached a real external host with
+      plausible real-world RTTs (~18-22ms); an unreachable address
+      (`192.0.2.1`, a documentation/test-only range that's never
+      routable) correctly reported 100% packet loss and a non-zero
+      exit code.
+      Not implemented: IPv6-specific flags, `-f`/`-A`
+      (flood/adaptive), `-s` (payload size).
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

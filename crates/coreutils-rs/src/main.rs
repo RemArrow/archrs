@@ -30,6 +30,7 @@ mod grep_cmd;
 mod gzip_cmd;
 mod less_cmd;
 mod patch_cmd;
+mod ping_cmd;
 mod procps_cmd;
 mod sed_cmd;
 mod tar_cmd;
@@ -187,6 +188,7 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "free" => procps_cmd::run_free(args),
         "uptime" => procps_cmd::run_uptime(args),
         "file" => file_cmd::run(args),
+        "ping" => ping_cmd::run(args),
         _ => return None,
     })
 }

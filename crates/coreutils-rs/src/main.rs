@@ -22,6 +22,8 @@ use std::ffi::OsString;
 use std::process::ExitCode;
 use std::vec::IntoIter;
 
+include!("util_list.rs");
+
 fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
     Some(match name {
         "ls" => uu_ls::uumain(args),
@@ -121,102 +123,27 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
     })
 }
 
-const UTILITIES: &[&str] = &[
-    "ls",
-    "cat",
-    "cp",
-    "mv",
-    "rm",
-    "mkdir",
-    "echo",
-    "pwd",
-    "touch",
-    "wc",
-    "head",
-    "tail",
-    "true",
-    "false",
-    "chmod",
-    "chown",
-    "chgrp",
-    "ln",
-    "rmdir",
-    "mkfifo",
-    "mknod",
-    "du",
-    "df",
-    "sort",
-    "uniq",
-    "cut",
-    "tr",
-    "tee",
-    "dd",
-    "dirname",
-    "basename",
-    "realpath",
-    "readlink",
-    "sync",
-    "sleep",
-    "date",
-    "id",
-    "whoami",
-    "who",
-    "uname",
-    "env",
-    "printf",
-    "seq",
-    "shuf",
-    "split",
-    "join",
-    "paste",
-    "comm",
-    "expand",
-    "unexpand",
-    "fold",
-    "fmt",
-    "nl",
-    "od",
-    "base64",
-    "base32",
-    "md5sum",
-    "sha1sum",
-    "sha256sum",
-    "sha512sum",
-    "mktemp",
-    "install",
-    "stat",
-    "test",
-    "[",
-    "expr",
-    "yes",
-    "nice",
-    "nohup",
-    "timeout",
-    "kill",
-    "factor",
-    "numfmt",
-    "tsort",
-    "csplit",
-    "shred",
-    "link",
-    "unlink",
-    "vdir",
-    "dir",
-    "dircolors",
-    "groups",
-    "logname",
-    "tty",
-    "users",
-    "stdbuf",
-    "hostid",
-    "arch",
-    "nproc",
-    "printenv",
-    "pathchk",
-    "pinky",
-    "sum",
-    "cksum",
-];
+fn utility_names() -> String {
+    UTILS
+        .iter()
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// `dir`/`vdir` are thin wrappers around `ls`'s own logic and ship no
+/// locale files of their own — real coreutils resolves their Fluent
+/// strings from `ls`'s bundle instead (see `uucore::get_canonical_util_name`,
+/// which does this same `uu_<name>` → canonical-name mapping for the
+/// per-utility binaries in the actual uutils/coreutils monorepo).
+fn setup_locale_for(util: &str) {
+    let crate_name = UTILS
+        .iter()
+        .find(|(name, _)| *name == util)
+        .map_or(util, |(_, crate_name)| crate_name);
+    let canonical = uucore::get_canonical_util_name(crate_name);
+    let _ = uucore::locale::setup_localization(canonical);
+}
 
 fn main() -> ExitCode {
     let argv: Vec<OsString> = std::env::args_os().collect();
@@ -228,8 +155,11 @@ fn main() -> ExitCode {
         .to_string();
 
     // Symlink form: argv[0] is already the utility name (e.g. `ls`).
-    if let Some(code) = dispatch(&exe_name, argv.clone().into_iter()) {
-        return exit_code(code);
+    if UTILS.iter().any(|(name, _)| *name == exe_name) {
+        setup_locale_for(&exe_name);
+        if let Some(code) = dispatch(&exe_name, argv.clone().into_iter()) {
+            return exit_code(code);
+        }
     }
 
     // `coreutils-rs <utility> [args...]` form: argv[1] names the utility,
@@ -238,18 +168,21 @@ fn main() -> ExitCode {
     let util = argv.get(1).and_then(|a| a.to_str()).map(str::to_string);
     if let Some(util) = util {
         uucore::set_utility_is_second_arg();
+        if UTILS.iter().any(|(name, _)| *name == util) {
+            setup_locale_for(&util);
+        }
         let sub_argv = argv.into_iter().skip(1).collect::<Vec<_>>().into_iter();
         if let Some(code) = dispatch(&util, sub_argv) {
             return exit_code(code);
         }
         eprintln!("coreutils-rs: unknown utility '{util}'");
-        eprintln!("available utilities: {}", UTILITIES.join(", "));
+        eprintln!("available utilities: {}", utility_names());
         return ExitCode::FAILURE;
     }
 
     eprintln!("usage: coreutils-rs <utility> [args...]");
     eprintln!("       (or install as a symlink named after the utility)");
-    eprintln!("available utilities: {}", UTILITIES.join(", "));
+    eprintln!("available utilities: {}", utility_names());
     ExitCode::FAILURE
 }
 

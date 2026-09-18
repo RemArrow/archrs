@@ -113,12 +113,27 @@ rather than reinventing; adapt/vendor where sensible.
       `cut`, `tr`, `seq`, `base64`, `sha256sum`, `basename`, `dirname`,
       `id -u`, `uname -m`, `expr`, `stat -c %s`; `mkdir -p`, `touch`,
       `mv`, `rm`, `chmod`, `ln -s`, `du`, `test`/`[` verified functionally.
-      Known gap: `--help`/`--version` text shows untranslated placeholder
-      strings (`ls-about`, `ls-usage`) — the upstream crates expect their
-      Fluent localization assets bundled by the parent `coreutils` build,
-      which we don't do yet.
-- [ ] Bundle/enable the Fluent localization assets so `--help`/`--version`
-      render real text instead of placeholder keys.
+- [x] `--help`/`--version` render real text (release builds only) instead
+      of raw Fluent keys like `ls-about`. Root cause: each `uu_*` crate
+      needs `uucore::locale::setup_localization(name)` called with a
+      filesystem path to its `locales/*.ftl` files, which the upstream
+      `coreutils` monorepo satisfies via a layout (`src/uu/<name>/locales`
+      next to `src/uucore/locales`) that doesn't exist when pulling `uu_*`
+      as ordinary crates.io deps like we do — `uucore`'s own
+      embedded-locale fallback also silently no-ops outside that layout.
+      Fixed with a `build.rs` (see its own comments for the full
+      reverse-engineered detail) that uses `cargo_metadata` to find each
+      dependency's source dir and copies its `locales/*.ftl` next to the
+      compiled binary — including two non-obvious extra copies:
+      `checksum_common`'s locale (shared by the `*sum` utilities) and
+      uucore's own common-strings bundle, which a hardcoded 3-parent
+      directory walk inside uucore expects one level *above* the target
+      dir rather than under it. `dir`/`vdir` (thin `ls` wrappers with no
+      locale files of their own) correctly fall back to `ls`'s bundle via
+      `uucore::get_canonical_util_name`, matching real coreutils.
+      This leans on private uucore internals with no stability guarantee,
+      so a future uucore 0.12.x patch could silently break it again —
+      worth rechecking after any version bump.
 - [ ] Utilities outside real coreutils that a base install still needs
       (grep, sed, find, tar, gzip, less, ...) come from separate GNU
       projects (grep, sed, findutils, tar, gzip), not `uutils/coreutils`

@@ -8,6 +8,9 @@ license.workspace = true
 name = "coreutils-rs"
 path = "src/main.rs"
 
+[build-dependencies]
+cargo_metadata = "0.19"
+
 [dependencies]
 uucore = "0.12"
 uu_ls = "0.12"

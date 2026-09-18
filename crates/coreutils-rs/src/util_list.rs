@@ -123,4 +123,10 @@ const UTILS: &[(&str, &str)] = &[
     // less is also its own separate project; vendors the `minus`
     // terminal-pager crate instead — see less_cmd.rs.
     ("less", "archrs-native"),
+    // Phase 4 (ROADMAP.md): a POSIX/bash-compatible shell, vendored from
+    // `brush-shell` rather than hand-writing one — unlike everything
+    // above, this reads real process argv itself instead of taking an
+    // args iterator, so main.rs special-cases dispatch for these two.
+    ("sh", "brush-shell"),
+    ("bash", "brush-shell"),
 ];

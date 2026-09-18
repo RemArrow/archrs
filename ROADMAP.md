@@ -306,8 +306,37 @@ for real installs.
       (no dependency graph, no "start B only after A is *ready*" for
       long-running services).
 
-### Phase 4 — shell & base-devel toolchain
+### Phase 4 — shell & base-devel toolchain (started)
 bash replacement, makepkg equivalent, build tooling.
+
+- [x] `sh`/`bash` — vendored `brush-shell` (a real POSIX/bash-compatible
+      shell implementation in Rust — reimplementing a shell's parser,
+      expansion rules, and job control from scratch would dwarf every
+      other utility in this repo combined) into `coreutils-rs`'s
+      multicall dispatch. `brush_shell::entry::run()` doesn't fit the
+      pattern every other utility here follows: it reads real process
+      argv itself instead of taking an args iterator we hand it, and it
+      calls `process::exit()` internally rather than returning a code.
+      That's exactly right for the symlink form (`bash -> coreutils-rs`,
+      where real argv already looks like a normal shell invocation) but
+      breaks the `coreutils-rs bash args...` convenience form, where
+      argv[0] would be `coreutils-rs` and argv[1] `bash` — brush would
+      try to parse "bash" as a script file. Fixed generally (not just
+      for brush) by re-executing ourselves with a corrected `argv[0]`
+      via `Command::arg0` whenever that form names `sh`/`bash`.
+      Verified against real bash for: arithmetic expansion, `for`
+      loops, conditionals (`[ -f ... ]`), functions, command
+      substitution, bash arrays (`arr=(a b c)`, `${arr[1]}`), bash case-
+      conversion expansion (`${x^^}`), pipes to an external command
+      (`grep`), and output redirection — all byte-identical. Also
+      verified the re-exec fix directly: `coreutils-rs bash -c 'echo
+      $0'` correctly prints `bash`, confirming argv[0] carries through.
+      Not implemented/unverified: brush's own coverage gaps against
+      real bash (there will be some, e.g. more obscure job-control or
+      parameter-expansion edge cases) haven't been separately audited
+      beyond the checks above — this leans on brush's own test suite
+      for the rest of its compatibility claim rather than re-verifying
+      it here.
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

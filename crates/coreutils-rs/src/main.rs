@@ -19,6 +19,7 @@
 //!   without installing symlinks first
 
 use std::ffi::OsString;
+use std::os::unix::process::CommandExt;
 use std::process::ExitCode;
 use std::vec::IntoIter;
 
@@ -162,8 +163,44 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "gzip" => gzip_cmd::run(args),
         "gunzip" => gzip_cmd::run_gunzip(args),
         "zcat" => gzip_cmd::run_zcat(args),
+        // brush_shell::entry::run() reads *real* process argv itself
+        // (see the doc comment on `reexec_as` below) rather than taking
+        // the `args` iterator we build for every other utility, and it
+        // always calls process::exit() internally — it never returns.
+        // This arm is only reachable from the symlink form, where our
+        // real argv is already exactly what brush expects.
+        "sh" | "bash" => {
+            brush_shell::entry::run();
+            unreachable!("brush_shell::entry::run() always calls process::exit")
+        }
         _ => return None,
     })
+}
+
+/// `brush_shell::entry::run()` (see `dispatch` above) parses `std::env
+/// ::args()` itself instead of taking an args iterator, so it only works
+/// correctly when our own real argv is already shaped like a normal
+/// shell invocation (argv[0] = the shell's name). That's true for the
+/// symlink form but not `coreutils-rs bash args...`, where argv[0] is
+/// `coreutils-rs` and argv[1] is `bash` — brush would try to parse
+/// "bash" as if it were a script file to run. Re-executing ourselves
+/// with a corrected argv[0] (via `arg0`, distinct from the actual
+/// program path) fixes this generally, for brush or anything else that
+/// might someday read real argv the same way.
+fn reexec_as(util: &str, rest: &[OsString]) -> ExitCode {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("coreutils-rs: could not determine current executable: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let err = std::process::Command::new(&exe)
+        .arg0(util)
+        .args(rest)
+        .exec();
+    eprintln!("coreutils-rs: failed to re-exec as '{util}': {err}");
+    ExitCode::FAILURE
 }
 
 fn utility_names() -> String {
@@ -215,6 +252,9 @@ fn main() -> ExitCode {
     // utility's usage/error messages read as if it were invoked directly.
     let util = argv.get(1).and_then(|a| a.to_str()).map(str::to_string);
     if let Some(util) = util {
+        if util == "sh" || util == "bash" {
+            return reexec_as(&util, &argv[2..]);
+        }
         uucore::set_utility_is_second_arg();
         if UTILS.iter().any(|(name, _)| *name == util) {
             setup_locale_for(&util);

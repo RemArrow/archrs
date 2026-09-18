@@ -262,10 +262,49 @@ for real installs.
       themselves use the same flags and MS_PRIVATE-first sequencing real
       init systems and container runtimes use, but this needs a real
       boot or a more permissive sandbox to confirm.
-      Not implemented: real `reboot(2)`/`poweroff(2)` orchestration
-      (syncing and unmounting filesystems, actually power-cycling
-      hardware), service restart policies, and any dependency ordering
-      between services (everything spawns at once, in file order).
+- [x] Service ordering, restart policies, and reboot/poweroff. Service
+      list lines take an optional prefix: `wait <cmd>` blocks until it
+      exits before moving to the next line (the ordering primitive —
+      one-shot setup steps other services depend on), `respawn <cmd>`
+      restarts it whenever it exits as long as the system isn't
+      shutting down, and a bare command is the original start-once-and-
+      leave-it behavior. SIGUSR1/SIGUSR2 trigger the same teardown as
+      SIGTERM/SIGINT but then call the real `reboot(2)` syscall
+      (`RB_AUTOBOOT`/`RB_POWER_OFF`) — no separate `reboot`/`poweroff`
+      command exists yet, just these two signals, since there's no IPC
+      mechanism for anything richer.
+      Verified `wait` ordering and `respawn` for real under
+      `unshare --user --pid --mount --fork`: two `wait`-prefixed setup
+      steps run and complete strictly in order before the async service
+      starts, and a `respawn`-prefixed short-lived process gets
+      restarted every time it exits, correctly stopping once shutdown
+      begins. Verified SIGUSR1/SIGUSR2 for real too: both correctly run
+      the shutdown sequence, then attempt the actual `reboot(2)` syscall
+      with the right mode flag, observed via a backgrounded `unshare` +
+      `pgrep`/`kill` from outside the namespace. `reboot(2)` itself
+      returned EPERM in this sandbox (it needs `CAP_SYS_BOOT`, which
+      this environment's user namespaces don't grant — same class of
+      restriction as the mount EPERMs above, not a bug in the calls
+      themselves), so the specific namespace-termination-by-signal
+      behavior reboot(2) is documented to have (the parent's `wait()`
+      seeing the child die by SIGHUP for restart / SIGINT for power off)
+      is unverified here; what's confirmed is that the syscall is
+      attempted correctly and failure is handled gracefully rather than
+      hanging or panicking.
+      Known minor gap: the shutdown-flag check and `waitpid` in the reap
+      loop aren't atomic with each other, so a `respawn` service can in
+      principle be restarted once more in the narrow window between a
+      shutdown signal arriving and the next loop iteration noticing it
+      (observed once during testing: a respawned process, started right
+      before shutdown was noticed, got reaped correctly on the very next
+      iteration — the system still converges to a clean shutdown, just
+      with a possible one-extra-restart race rather than a hard
+      guarantee of zero).
+      Not implemented: real reboot/poweroff *orchestration* beyond the
+      syscall itself (syncing and unmounting filesystems first), and any
+      ordering more expressive than "block until this one line finishes"
+      (no dependency graph, no "start B only after A is *ready*" for
+      long-running services).
 
 ### Phase 4 — shell & base-devel toolchain
 bash replacement, makepkg equivalent, build tooling.

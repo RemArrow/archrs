@@ -478,6 +478,26 @@ rather than an exhaustive, fixed checklist the way Phases 1-4 were.
       new, less battle-tested crate (0.2.0) compared to e.g. the
       `uu_*`/`grep-*`/`findutils` crates this project otherwise leans
       on, worth keeping in mind if something obscure misbehaves later.
+- [x] `curl` — no real curl-CLI-compatible crate exists to vendor
+      wholesale without pulling in a lot of unrelated scope (the
+      closest candidate bundles BitTorrent and SSH support), so this
+      is a thin CLI layer (`curl_cmd.rs`) over `ureq`, the same HTTP
+      client already proven elsewhere in this workspace (`alpm-rs`
+      fetching real package archives, `makepkg-rs` downloading
+      PKGBUILD sources) — not a from-scratch HTTP client.
+      Covers GET (default) / `-X` / implicit POST via `-d`, `-o`/`-O`,
+      `-I` (headers), `-H`, `-A`, `-f` (fail on HTTP error status).
+      `-L` is accepted as a no-op since `ureq` already follows
+      redirects by default.
+      Verified byte-identical against real `curl` for a plain GET and
+      `-o` against a real local HTTP server (not mocked), `-O`
+      correctly deriving the remote filename and downloading real
+      content, `-I` returning real response headers, and a real HTTPS
+      GET against an actual Arch mirror
+      (`https://geo.mirror.pkgbuild.com/lastsync`) matching real curl
+      byte-for-byte.
+      Not implemented: `--data-urlencode`, cookies, `.netrc`, HTTP/2,
+      client certificates.
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

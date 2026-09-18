@@ -139,4 +139,8 @@ const UTILS: &[(&str, &str)] = &[
     // vendors `awk-rs` (a from-scratch AWK lexer/parser/interpreter)
     // rather than hand-rolling one.
     ("awk", "archrs-native"),
+    // curl, built on the same ureq HTTP client already proven
+    // elsewhere in this workspace (see curl_cmd.rs) — no vendor
+    // target existed without pulling in a lot of unrelated scope.
+    ("curl", "archrs-native"),
 ];

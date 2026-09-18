@@ -24,6 +24,7 @@ use std::process::ExitCode;
 use std::vec::IntoIter;
 
 mod awk_cmd;
+mod curl_cmd;
 mod grep_cmd;
 mod gzip_cmd;
 mod less_cmd;
@@ -179,6 +180,7 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "which" => which_cmd::run(args),
         "patch" => patch_cmd::run(args),
         "awk" => awk_cmd::run(args),
+        "curl" => curl_cmd::run(args),
         _ => return None,
     })
 }

@@ -841,6 +841,7 @@ dependencies = [
  "patch-apply",
  "regex",
  "tar",
+ "ureq",
  "uu_arch",
  "uu_base32",
  "uu_base64",

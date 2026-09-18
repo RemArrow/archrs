@@ -25,6 +25,7 @@ use std::vec::IntoIter;
 
 mod awk_cmd;
 mod curl_cmd;
+mod file_cmd;
 mod grep_cmd;
 mod gzip_cmd;
 mod less_cmd;
@@ -185,6 +186,7 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "ps" => procps_cmd::run_ps(args),
         "free" => procps_cmd::run_free(args),
         "uptime" => procps_cmd::run_uptime(args),
+        "file" => file_cmd::run(args),
         _ => return None,
     })
 }

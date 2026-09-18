@@ -604,6 +604,21 @@ rather than an exhaustive, fixed checklist the way Phases 1-4 were.
       like every other Unix CLI. Fixed once, generally, at the top of
       `coreutils-rs`'s own `main()` — the same fix `pacman-rs` already
       had for the same reason.
+- [x] `file` — vendors the `magic` crate, real FFI bindings to the
+      system's actual `libmagic` C library and its full default magic
+      database, rather than a "safe Rust re-implementation of
+      libmagic" alternative that exists too — binding the real library
+      gets the exact same detection results real `file` produces, not
+      a second, independently-maintained copy of the magic database
+      that could drift from it (same reasoning as `zstd`/`bzip2`/`xz2`
+      elsewhere in this project). Covers `-i`/`--mime` and
+      `-b`/`--brief`.
+      Verified byte-identical against real `file` across plain text,
+      a shell script (detected as `POSIX shell script, ASCII text
+      executable`), a real ELF binary (full detail string including
+      interpreter path and BuildID matched exactly), an HTML file, and
+      `-i` MIME-type output.
+      Not implemented: stdin (`-`), directory recursion, `--extension`.
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

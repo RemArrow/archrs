@@ -149,4 +149,7 @@ const UTILS: &[(&str, &str)] = &[
     ("ps", "archrs-native"),
     ("free", "archrs-native"),
     ("uptime", "archrs-native"),
+    // `file`, built on real libmagic via FFI (the `magic` crate) —
+    // see file_cmd.rs.
+    ("file", "archrs-native"),
 ];

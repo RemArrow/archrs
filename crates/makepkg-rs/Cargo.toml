@@ -1,0 +1,17 @@
+[package]
+name = "makepkg-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "makepkg-rs"
+path = "src/main.rs"
+
+[dependencies]
+alpm-rs = { path = "../alpm-rs" }
+anyhow.workspace = true
+tar = "0.4"
+flate2 = "1"
+zstd = "0.13"
+ureq = "2"

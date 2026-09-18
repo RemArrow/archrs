@@ -352,6 +352,57 @@ bash replacement, makepkg equivalent, build tooling.
       beyond the checks above — this leans on brush's own test suite
       for the rest of its compatibility claim rather than re-verifying
       it here.
+- [x] `makepkg-rs` — a new crate building a real installable package
+      (`.pkg.tar.zst`, matching real makepkg's own layout closely
+      enough for `pacman-rs -U` to install it) from a PKGBUILD, the
+      same shape as real makepkg. A PKGBUILD is a bash script, not a
+      data format — there's nothing to "parse" without actually
+      sourcing it in a real shell, so this hands it to a real bash to
+      extract variables (`declare -p`) and function names (`declare
+      -F`), then runs whichever of `prepare`/`build`/`check`/`package`
+      are defined with the usual `$srcdir`/`$pkgdir`/`$startdir` env
+      vars set. Prefers a sibling `coreutils-rs` binary (dogfooding
+      this project's own `bash`) over the system one when the
+      workspace is built together, falling back to system `bash`
+      otherwise. `source=()` URLs are downloaded with `ureq` and
+      verified against `sha256sums=()` (`"SKIP"` entries skip
+      verification, matching real makepkg), with recognized archive
+      formats (`.tar.gz`/`.tar.zst`/`.tar`) extracted into `src/`.
+      Needed two additions to `alpm-rs` to close the loop:
+      `parse_pkginfo`/`write_pkginfo` for the `.PKGINFO` metadata
+      format makepkg embeds in every package (different from the
+      local/sync db's own `desc` format despite describing the same
+      package), and `pacman-rs` gained `-U` (install a local package
+      file directly) to actually install what this builds — see
+      Phase 1's checklist for `-U`'s own verification against a real
+      Arch package.
+      Verified end-to-end, twice: (1) a PKGBUILD with no external
+      source, just a `package()` that writes a script — built, then
+      installed with `pacman-rs -U` into a sandboxed root, then the
+      *actually-installed* binary was executed and produced the
+      expected output; (2) a PKGBUILD exercising the parts (1) didn't
+      — a `source=()` entry served over a real local HTTP server (not
+      mocked), `sha256sums` verification, `.tar.gz` extraction, and a
+      `build()` function — confirmed downloading, checksumming,
+      extracting, and building all happened correctly (`build()`
+      logged running from the correct extracted-source directory),
+      then installed and ran the result the same way as (1). Repeated
+      the first check again using only the release binaries end to
+      end (`makepkg-rs` → `pacman-rs -U` → run) to confirm the real
+      deployment path, not just the debug build used while iterating.
+      One real bug caught and fixed along the way: the first archive
+      built didn't include directory entries (`usr/`, `usr/bin/`),
+      only files, which `pacman-rs`'s extractor — like real pacman's —
+      assumes already exist rather than creating missing parents
+      itself; fixed by using `tar::Builder::append_dir_all` instead of
+      a file-only walk.
+      Known gaps: single-package PKGBUILDs only (no split `pkgname=()`
+      packages), no `.install` scriptlets, no PGP source verification,
+      no dependency resolution before building (real makepkg would
+      refuse to build without `makedepends`/`depends` present; this
+      doesn't check), and the `declare -p` output parser handles the
+      common case (quoted scalars, indexed arrays) rather than being
+      fully shell-quoting-aware.
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

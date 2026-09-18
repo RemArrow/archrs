@@ -22,6 +22,7 @@ use std::ffi::OsString;
 use std::process::ExitCode;
 use std::vec::IntoIter;
 
+mod grep_cmd;
 mod gzip_cmd;
 mod tar_cmd;
 
@@ -153,6 +154,7 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
             findutils::updatedb::updatedb_main(&strs)
         }
         "tar" => tar_cmd::run(args),
+        "grep" => grep_cmd::run(args),
         "gzip" => gzip_cmd::run(args),
         "gunzip" => gzip_cmd::run_gunzip(args),
         "zcat" => gzip_cmd::run_zcat(args),

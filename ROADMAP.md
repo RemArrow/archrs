@@ -162,12 +162,29 @@ rather than reinventing; adapt/vendor where sensible.
         argv[0]-based aliasing (`gunzip`/`zcat` imply decompression,
         `zcat` also implies `-c`). Verified round-trip and cross-interop
         with real gzip/gunzip in both directions.
-  - [ ] `grep` — no vendor target chosen yet. Candidate: BurntSushi's
-        `grep-searcher`/`grep-regex`/`grep-matcher` crates (the actual
-        libraries ripgrep is built from) with a hand-written GNU-grep-
-        compatible CLI layer, since no ready `grep`-flag-compatible
-        binary crate exists — real glue-code work, not just a
-        Cargo.toml entry.
+  - [x] `grep` — vendored BurntSushi's `grep-searcher`/`grep-regex`/
+        `grep-matcher` crates (the actual libraries ripgrep is built
+        from) with a hand-written GNU-grep-compatible CLI layer
+        (`src/grep_cmd.rs`), since no ready `grep`-flag-compatible
+        binary crate exists. Covers `-i -v -n -c -l -L -r -R -w -x -o
+        -F -E -H -h`, files/directories/stdin. Pattern syntax is the
+        `regex` crate's own (ERE-like, no backreferences) rather than
+        true POSIX BRE — GNU grep's default mode has different escaping
+        (`\(` `\)` for groups) the regex crate doesn't support; noted as
+        a real behavior deviation for patterns that lean on it, though
+        everyday patterns (literals, character classes, `*`/`.`/`^`/`$`)
+        behave the same either way. Not implemented: `-A`/`-B`/`-C`
+        context lines, `-P` (PCRE).
+        Verified byte-identical against real GNU grep 3.12 across all
+        of the above flags, multi-file search (with correct filename
+        prefixing), recursive directory search, and stdin. One
+        surprise along the way: this system's own `grep` shell
+        alias/wrapper resolves to `ugrep`, not GNU grep, and ugrep's
+        own multi-file output ordering is genuinely non-deterministic
+        (parallel file scanning) — had to test against `/usr/bin/grep`
+        directly to get an authoritative comparison; our own multi-file
+        ordering is deterministic (command-line argument order), which
+        also matches true GNU grep's documented behavior.
   - [ ] `sed` — no good vendor target: GNU sed's scripting language
         (addresses, hold space, branches/labels, in-place edit) has no
         existing Rust implementation to draw on. Needs an explicit scope

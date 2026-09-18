@@ -112,4 +112,8 @@ const UTILS: &[(&str, &str)] = &[
     ("gzip", "archrs-native"),
     ("gunzip", "archrs-native"),
     ("zcat", "archrs-native"),
+    // GNU grep is also its own separate upstream project. No `uu_grep`
+    // to vendor, but ripgrep's own search-engine libraries are — see
+    // grep_cmd.rs for the CLI glue built on top of them.
+    ("grep", "archrs-native"),
 ];

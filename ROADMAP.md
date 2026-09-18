@@ -512,6 +512,55 @@ rather than an exhaustive, fixed checklist the way Phases 1-4 were.
       with ours (byte-identical file trees both ways), plus
       extension-based auto-detection (`.tar.xz`/`.tar.bz2`) creating
       the right format without an explicit `-J`/`-j` flag.
+- [x] `crond`/`crontab` (new crate, `archrs-cron`) — a cron daemon and
+      crontab-management CLI, built on `crontab-rs`'s cron-expression
+      parser/matcher (`Schedule`/`Crontab` — the fiddly, error-prone
+      part: day-of-month/day-of-week OR semantics, ranges, steps,
+      `@reboot`, etc.) rather than hand-rolling a cron expression
+      evaluator.
+      Deliberately scoped to **single-user cron**, not a full system
+      cron replacement — a real, explicit security decision, not an
+      oversight: multi-user cron (`/var/spool/cron/<user>` per-user
+      tables, `/etc/crontab`/`cron.d` system tables with a `user`
+      column) needs setuid/setgid privilege-dropping to run each job
+      as its owning user, and `crontab-rs` itself only exposes its
+      parsing/scheduling engine as *stable* public API — its own
+      daemon/privilege-drop/mail-delivery modules are explicitly
+      marked "not covered by semver," i.e. internal detail the crate
+      author doesn't intend for reuse. Reimplementing that
+      security-critical logic ourselves, on unstable internals,
+      without the scrutiny it deserves, isn't a reasonable trade for
+      what a personal automation tool needs — same reasoning as
+      Phase 1 shelling out to `gpg` rather than reimplementing OpenPGP.
+      `crond` reads one crontab (`~/.config/archrs/crontab` by
+      default) and runs every matched job as whichever user `crond`
+      itself runs as. `crontab` manages that one file: `-l`/`-r`/`-e`
+      (edit via `$EDITOR`/`$VISUAL`, re-validated before being
+      installed — a rejected edit leaves the previous crontab
+      untouched) and installing from a file or stdin. Every install
+      path validates with `Crontab::parse` first and refuses to save
+      anything invalid.
+      Verified for real: installed a `* * * * *` job via `crontab -`,
+      confirmed `crontab -l` shows it, confirmed an invalid crontab is
+      rejected without disturbing the valid one already installed, and
+      ran `crond` live for ~65 real seconds — it correctly fired the
+      job at both one-minute boundaries crossed and appended the
+      expected output both times (checked via a real timestamped log
+      file, not mocked). Also caught and fixed a real dispatch bug
+      during this testing: `crontab -` (read from stdin) was being
+      rejected as an unrecognized flag because `"-"` starts with `-`,
+      same shape of bug as `-e`/`-x` bundle-vs-flag ambiguity elsewhere
+      in this project.
+      Not implemented: `-u` (other users' crontabs — the exact
+      multi-user surface this scope decision stays out of), mailing
+      job output, and `RANDOM_DELAY`/`CRON_TZ` handling beyond what
+      parsing validates. `@yearly`/`@daily`/`@hourly` etc. shortcuts
+      parse and validate correctly (confirmed) and fire on schedule
+      the same as any other entry, since `Schedule::matches` handles
+      them internally — but `@reboot` (meant to fire once when the
+      daemon starts) never does, since `crond`'s loop only checks
+      entries against the current time and has no separate
+      run-once-at-startup path for it.
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

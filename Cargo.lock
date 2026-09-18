@@ -141,6 +141,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "archrs-cron"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "crontab-rs",
+]
+
+[[package]]
 name = "archrs-init"
 version = "0.1.0"
 dependencies = [
@@ -989,6 +998,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "crontab-rs"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01befbe9a218a3e5bbfd15d5e6bca30e00a148705a68826d6e0c0a8d1cf004ce"
+dependencies = [
+ "chrono",
+ "clap",
+ "libc",
+ "log",
+ "nix 0.31.3",
+ "rand 0.10.2",
+ "signal-hook 0.4.4",
+ "syslog",
+ "tempfile",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1036,7 +1062,7 @@ dependencies = [
  "parking_lot",
  "rustix",
  "serde",
- "signal-hook",
+ "signal-hook 0.3.18",
  "signal-hook-mio",
  "winapi",
 ]
@@ -3769,6 +3795,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-hook"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2a0c28ca5908dbdbcd52e6fdaa00358ab88637f8ab33e1f188dd510eb44b53d"
+dependencies = [
+ "libc",
+ "signal-hook-registry",
+]
+
+[[package]]
 name = "signal-hook-mio"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3776,7 +3812,7 @@ checksum = "b75a19a7a740b25bc7944bdee6172368f988763b744e3d4dfe753f6b4ece40cc"
 dependencies = [
  "libc",
  "mio",
- "signal-hook",
+ "signal-hook 0.3.18",
 ]
 
 [[package]]
@@ -3967,6 +4003,18 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-io-kit",
  "windows 0.62.2",
+]
+
+[[package]]
+name = "syslog"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "019f1500a13379b7d051455df397c75770de6311a7a188a699499502704d9f10"
+dependencies = [
+ "hostname",
+ "libc",
+ "log",
+ "time",
 ]
 
 [[package]]

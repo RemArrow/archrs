@@ -136,9 +136,46 @@ rather than reinventing; adapt/vendor where sensible.
       worth rechecking after any version bump.
 - [ ] Utilities outside real coreutils that a base install still needs
       (grep, sed, find, tar, gzip, less, ...) come from separate GNU
-      projects (grep, sed, findutils, tar, gzip), not `uutils/coreutils`
-      — no equivalent `uu_*` crate to vendor, so these need their own
-      sourcing decision per tool when we get to them.
+      projects, not `uutils/coreutils` — each needed its own sourcing
+      decision instead of a ready `uu_*` crate:
+  - [x] `find`, `xargs`, `locate`, `updatedb` — vendored from the
+        `findutils` crate, GNU findutils' own official uutils Rust port
+        (same organization as `uutils/coreutils`, published the same
+        way). Verified `find -name`/`-type` and `xargs` byte-identical
+        against real GNU findutils.
+  - [x] `tar` — GNU tar has no Rust port to vendor, so this is our own
+        thin CLI (`src/tar_cmd.rs`) over the `tar`/`flate2`/`zstd` crates
+        (the same libraries `alpm-rs` already uses for real package
+        archives). Covers `-c`/`-x`/`-t` with gzip/zstd compression,
+        both the old bundled-flag style (`tar xvf a.tar`) and normal
+        `-xvf`. Not implemented: bzip2/xz (no vendored crate yet),
+        incremental archives, extracting a subset of named members.
+        Verified round-trip and cross-interop with real GNU tar in both
+        directions (our archive → real tar extract, and vice versa),
+        including `.tar.gz`. Known cosmetic gap: `-t` listing doesn't
+        always show a trailing `/` on directory entries the way real
+        tar's `-t` does, because the `tar` crate's own `append_dir_all`
+        doesn't consistently store one for nested directories — harmless,
+        since extraction itself was verified byte-identical.
+  - [x] `gzip`/`gunzip`/`zcat` — likewise no Rust port to vendor; our own
+        thin CLI (`src/gzip_cmd.rs`) over `flate2`, with `gzip`'s usual
+        argv[0]-based aliasing (`gunzip`/`zcat` imply decompression,
+        `zcat` also implies `-c`). Verified round-trip and cross-interop
+        with real gzip/gunzip in both directions.
+  - [ ] `grep` — no vendor target chosen yet. Candidate: BurntSushi's
+        `grep-searcher`/`grep-regex`/`grep-matcher` crates (the actual
+        libraries ripgrep is built from) with a hand-written GNU-grep-
+        compatible CLI layer, since no ready `grep`-flag-compatible
+        binary crate exists — real glue-code work, not just a
+        Cargo.toml entry.
+  - [ ] `sed` — no good vendor target: GNU sed's scripting language
+        (addresses, hold space, branches/labels, in-place edit) has no
+        existing Rust implementation to draw on. Needs an explicit scope
+        decision before starting (e.g. a `s///`/`-n`+`p`/`-i` subset vs.
+        the full language) rather than a default "vendor" pattern.
+  - [ ] `less` — candidate: the `minus` crate (an actual terminal-pager
+        library), scoped to basic scrolling/search rather than less's
+        full feature set.
 
 ### Phase 3 — init & service management
 Arch uses systemd. A from-scratch Rust init is a huge surface (cgroups,

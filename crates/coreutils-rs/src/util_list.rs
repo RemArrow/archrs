@@ -96,4 +96,20 @@ const UTILS: &[(&str, &str)] = &[
     ("pinky", "uu_pinky"),
     ("sum", "uu_sum"),
     ("cksum", "uu_cksum"),
+    // Not coreutils — GNU findutils, a separate upstream project, also
+    // with its own official uutils Rust port (the `findutils` crate,
+    // vendored the same way as the `uu_*` crates above). No locales dir
+    // to bundle for these; findutils doesn't use uucore's Fluent i18n.
+    ("find", "findutils"),
+    ("xargs", "findutils"),
+    ("locate", "findutils"),
+    ("updatedb", "findutils"),
+    // Not coreutils, not uutils — GNU tar and GNU gzip are separate
+    // upstream projects with no Rust port to vendor, so these are our
+    // own thin CLIs over the tar/flate2/zstd crates (see tar_cmd.rs and
+    // gzip_cmd.rs for what's in and out of scope).
+    ("tar", "archrs-native"),
+    ("gzip", "archrs-native"),
+    ("gunzip", "archrs-native"),
+    ("zcat", "archrs-native"),
 ];

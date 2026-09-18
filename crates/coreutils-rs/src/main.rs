@@ -22,7 +22,19 @@ use std::ffi::OsString;
 use std::process::ExitCode;
 use std::vec::IntoIter;
 
+mod gzip_cmd;
+mod tar_cmd;
+
 include!("util_list.rs");
+
+/// findutils (GNU findutils' Rust port) predates and doesn't share
+/// coreutils' `#[uucore::main]`-generated `fn(impl Args) -> i32` shape:
+/// its entry points take `&[&str]` directly, and `find_main` additionally
+/// wants a `Dependencies` object (stdio/filesystem access, used upstream
+/// to let `find`'s own test suite mock them out).
+fn run_findutils_str_args(args: IntoIter<OsString>) -> Vec<String> {
+    args.map(|s| s.to_string_lossy().into_owned()).collect()
+}
 
 fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
     Some(match name {
@@ -119,6 +131,31 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "pinky" => uu_pinky::uumain(args),
         "sum" => uu_sum::uumain(args),
         "cksum" => uu_cksum::uumain(args),
+        "find" => {
+            let owned = run_findutils_str_args(args);
+            let strs: Vec<&str> = owned.iter().map(String::as_str).collect();
+            let deps = findutils::find::StandardDependencies::new();
+            findutils::find::find_main(&strs, &deps)
+        }
+        "xargs" => {
+            let owned = run_findutils_str_args(args);
+            let strs: Vec<&str> = owned.iter().map(String::as_str).collect();
+            findutils::xargs::xargs_main(&strs)
+        }
+        "locate" => {
+            let owned = run_findutils_str_args(args);
+            let strs: Vec<&str> = owned.iter().map(String::as_str).collect();
+            findutils::locate::locate_main(&strs)
+        }
+        "updatedb" => {
+            let owned = run_findutils_str_args(args);
+            let strs: Vec<&str> = owned.iter().map(String::as_str).collect();
+            findutils::updatedb::updatedb_main(&strs)
+        }
+        "tar" => tar_cmd::run(args),
+        "gzip" => gzip_cmd::run(args),
+        "gunzip" => gzip_cmd::run_gunzip(args),
+        "zcat" => gzip_cmd::run_zcat(args),
         _ => return None,
     })
 }
@@ -141,6 +178,11 @@ fn setup_locale_for(util: &str) {
         .iter()
         .find(|(name, _)| *name == util)
         .map_or(util, |(_, crate_name)| crate_name);
+    // Non-uucore-based utilities (e.g. findutils) have no "uu_" prefix to
+    // strip and no Fluent locale bundle to look for in the first place.
+    if !crate_name.starts_with("uu_") {
+        return;
+    }
     let canonical = uucore::get_canonical_util_name(crate_name);
     let _ = uucore::locale::setup_localization(canonical);
 }

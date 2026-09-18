@@ -13,6 +13,10 @@ cargo_metadata = "0.19"
 
 [dependencies]
 uucore = "0.12"
+findutils = "0.10"
+tar = "0.4"
+flate2 = "1"
+zstd = "0.13"
 uu_ls = "0.12"
 uu_cat = "0.12"
 uu_cp = "0.12"

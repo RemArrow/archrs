@@ -129,4 +129,9 @@ const UTILS: &[(&str, &str)] = &[
     // args iterator, so main.rs special-cases dispatch for these two.
     ("sh", "brush-shell"),
     ("bash", "brush-shell"),
+    // Rest of "build tooling" (ROADMAP.md): small, well-scoped
+    // vendor targets for the remaining base-devel-adjacent utilities
+    // PKGBUILDs commonly need.
+    ("which", "archrs-native"),
+    ("patch", "archrs-native"),
 ];

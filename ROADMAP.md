@@ -149,7 +149,7 @@ rather than reinventing; adapt/vendor where sensible.
       This leans on private uucore internals with no stability guarantee,
       so a future uucore 0.12.x patch could silently break it again —
       worth rechecking after any version bump.
-- [ ] Utilities outside real coreutils that a base install still needs
+- [x] Utilities outside real coreutils that a base install still needs
       (grep, sed, find, tar, gzip, less, ...) come from separate GNU
       projects, not `uutils/coreutils` — each needed its own sourcing
       decision instead of a ready `uu_*` crate:
@@ -321,7 +321,7 @@ for real installs.
       (no dependency graph, no "start B only after A is *ready*" for
       long-running services).
 
-### Phase 4 — shell & base-devel toolchain (started)
+### Phase 4 — shell & base-devel toolchain (functionally complete)
 bash replacement, makepkg equivalent, build tooling.
 
 - [x] `sh`/`bash` — vendored `brush-shell` (a real POSIX/bash-compatible
@@ -431,6 +431,25 @@ bash replacement, makepkg equivalent, build tooling.
       doesn't check), and the `declare -p` output parser handles the
       common case (quoted scalars, indexed arrays) rather than being
       fully shell-quoting-aware.
+- [x] `which` and `patch` — the remaining small, well-scoped
+      base-devel-adjacent utilities PKGBUILDs commonly need. `which`
+      vendors the `which` crate (real cross-platform `PATH` lookup);
+      verified against `/usr/bin/which` directly (this environment's
+      interactive-shell `which` is itself a shell builtin that reports
+      aliases, an unrelated wrinkle like the earlier `ugrep` one — not
+      a discrepancy in ours). `patch` vendors `patch-apply` (a real
+      unified-diff parser/applier) for `-p<N>`/`-i`/stdin.
+      Caught and worked around a real bug in the vendored crate: its
+      `apply()` always drops the file's trailing newline regardless of
+      whether the original had one (it rejoins split lines with
+      `Vec::join("\n")`, which can't represent a final newline).
+      Verified against real GNU `patch` applying the same unified diff
+      to the same file — output was byte-identical only after adding a
+      one-line fix that restores the trailing newline when the
+      original had one; documented as leaning on this workaround rather
+      than a corrected upstream crate.
+      Not implemented: context/normal diff formats, fuzzy matching for
+      drifted line numbers, `-R` (reverse), `which -s` (silent).
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

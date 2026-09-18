@@ -26,8 +26,10 @@ use std::vec::IntoIter;
 mod grep_cmd;
 mod gzip_cmd;
 mod less_cmd;
+mod patch_cmd;
 mod sed_cmd;
 mod tar_cmd;
+mod which_cmd;
 
 include!("util_list.rs");
 
@@ -173,6 +175,8 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
             brush_shell::entry::run();
             unreachable!("brush_shell::entry::run() always calls process::exit")
         }
+        "which" => which_cmd::run(args),
+        "patch" => patch_cmd::run(args),
         _ => return None,
     })
 }

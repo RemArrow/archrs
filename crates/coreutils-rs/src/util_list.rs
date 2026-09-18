@@ -116,4 +116,8 @@ const UTILS: &[(&str, &str)] = &[
     // to vendor, but ripgrep's own search-engine libraries are — see
     // grep_cmd.rs for the CLI glue built on top of them.
     ("grep", "archrs-native"),
+    // GNU sed is likewise separate, with no Rust port of its scripting
+    // language to draw on at all — see sed_cmd.rs for the explicitly
+    // scoped-down subset implemented here.
+    ("sed", "archrs-native"),
 ];

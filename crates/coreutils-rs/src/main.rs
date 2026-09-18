@@ -24,6 +24,7 @@ use std::vec::IntoIter;
 
 mod grep_cmd;
 mod gzip_cmd;
+mod sed_cmd;
 mod tar_cmd;
 
 include!("util_list.rs");
@@ -155,6 +156,7 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         }
         "tar" => tar_cmd::run(args),
         "grep" => grep_cmd::run(args),
+        "sed" => sed_cmd::run(args),
         "gzip" => gzip_cmd::run(args),
         "gunzip" => gzip_cmd::run_gunzip(args),
         "zcat" => gzip_cmd::run_zcat(args),

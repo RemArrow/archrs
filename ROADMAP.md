@@ -185,11 +185,23 @@ rather than reinventing; adapt/vendor where sensible.
         directly to get an authoritative comparison; our own multi-file
         ordering is deterministic (command-line argument order), which
         also matches true GNU grep's documented behavior.
-  - [ ] `sed` — no good vendor target: GNU sed's scripting language
-        (addresses, hold space, branches/labels, in-place edit) has no
-        existing Rust implementation to draw on. Needs an explicit scope
-        decision before starting (e.g. a `s///`/`-n`+`p`/`-i` subset vs.
-        the full language) rather than a default "vendor" pattern.
+  - [x] `sed` — no vendor target existed (GNU sed's scripting language
+        has no existing Rust implementation to draw on), so this scope
+        decision was made explicitly rather than defaulting to "vendor":
+        a hand-written interpreter (`src/sed_cmd.rs`) covering
+        addresses (line number, `$`, `/regex/`, `addr1,addr2` ranges,
+        `!` negation), `s/pat/repl/flags` (`g`/`i`/`I`/`p`, any
+        non-backslash delimiter, `&`/`\1`-`\9`/`\&`/`\\` in
+        replacements) built on the `regex` crate, plus `p`/`d`/`q`,
+        `-n`, `-e` (repeatable), and `-i[SUFFIX]`. Explicitly not
+        implemented: hold space, branches/labels, multi-line commands
+        (`N`/`D`/`P`), `y///`, `a`/`i`/`c`. Whole input is read into
+        memory rather than streamed (fine at this scope).
+        Verified byte-identical against real GNU sed 4.10 across basic
+        `s///`, `g`/`i` flags, `-n`+`p`, line/regex/range/`$`
+        addressing, negation, `q`, capture-group backreferences (`-E`),
+        `&`, a custom delimiter, multiple `-e`, `-i` and `-i.bak`, and
+        stdin.
   - [ ] `less` — candidate: the `minus` crate (an actual terminal-pager
         library), scoped to basic scrolling/search rather than less's
         full feature set.

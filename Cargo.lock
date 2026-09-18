@@ -481,6 +481,7 @@ dependencies = [
  "grep-matcher",
  "grep-regex",
  "grep-searcher",
+ "regex",
  "tar",
  "uu_arch",
  "uu_base32",

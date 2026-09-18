@@ -561,6 +561,49 @@ rather than an exhaustive, fixed checklist the way Phases 1-4 were.
       daemon starts) never does, since `crond`'s loop only checks
       entries against the current time and has no separate
       run-once-at-startup path for it.
+- [x] `ps`/`free`/`uptime` — `procps-ng`, a separate upstream project
+      from `uutils/coreutils`, so no `uu_*` crate exists for any of
+      these. Vendors `procfs` (a real `/proc` parser, already used
+      transitively elsewhere in this dependency tree) and `users`
+      (uid-to-username lookup) rather than hand-parsing `/proc`
+      ourselves (`src/procps_cmd.rs`).
+      `free` ended up the most rigorously verified of the three: got
+      byte-identical against the real binary (`-k`/`-m`/`-g` and the
+      default) only after two real formula corrections, both caught by
+      diffing rather than assumed correct:
+      1. Naive `used = total - free - buffers - cached` didn't match;
+         subtracting reclaimable slab too got `buff/cache` exactly
+         right but `used` still didn't match.
+      2. Turned out modern `free` doesn't derive `used` from the
+         buffers/cache breakdown at all — it's simply
+         `total - available`. Once that clicked, `-k`/`-m`/`-g`, the
+         default, and even the exact column widths (measured
+         character-by-character from real `free`'s own output rather
+         than guessed) all matched byte-for-byte.
+      `-h` (human-readable) is close but not exact — a real, minor,
+      documented cosmetic gap in decimal-rounding rules, not chased
+      further once the data-bearing modes were exact.
+      `ps aux` was verified by comparing the PID set against real
+      `ps aux` (matching aside from each invocation's own transient
+      `awk`/`sort` pipeline subprocesses, expected) rather than an
+      exact line diff, since procps-ng's own column formatting has
+      version-specific quirks not worth chasing byte-for-byte; `%CPU`
+      is not implemented (always prints `0.0`) since computing it
+      properly needs either two time-separated samples or precise
+      boot-time math that this scope doesn't justify — documented
+      rather than silently wrong. `uptime`'s duration and load
+      averages matched real `uptime` exactly; its leading
+      current-time/logged-in-users prefix isn't implemented.
+      Caught and fixed a real, more broadly applicable bug while
+      testing `ps aux | head`: `coreutils-rs`'s own dispatch targets
+      (tar/gzip/grep/sed/awk/curl/ps/... — anything not going through
+      a `#[uucore::main]`-generated utility, which already handles
+      this internally) never restored SIGPIPE to its default
+      disposition, so piping any of them into something that closes
+      the pipe early (`| head`) panicked instead of exiting quietly
+      like every other Unix CLI. Fixed once, generally, at the top of
+      `coreutils-rs`'s own `main()` — the same fix `pacman-rs` already
+      had for the same reason.
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

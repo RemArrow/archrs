@@ -143,4 +143,10 @@ const UTILS: &[(&str, &str)] = &[
     // elsewhere in this workspace (see curl_cmd.rs) — no vendor
     // target existed without pulling in a lot of unrelated scope.
     ("curl", "archrs-native"),
+    // ps/free/uptime come from procps-ng, a separate upstream project
+    // from uutils/coreutils. Vendors `procfs` (a real /proc parser)
+    // and `users` (uid lookup) — see procps_cmd.rs.
+    ("ps", "archrs-native"),
+    ("free", "archrs-native"),
+    ("uptime", "archrs-native"),
 ];

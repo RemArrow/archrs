@@ -29,6 +29,7 @@ mod grep_cmd;
 mod gzip_cmd;
 mod less_cmd;
 mod patch_cmd;
+mod procps_cmd;
 mod sed_cmd;
 mod tar_cmd;
 mod which_cmd;
@@ -181,6 +182,9 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "patch" => patch_cmd::run(args),
         "awk" => awk_cmd::run(args),
         "curl" => curl_cmd::run(args),
+        "ps" => procps_cmd::run_ps(args),
+        "free" => procps_cmd::run_free(args),
+        "uptime" => procps_cmd::run_uptime(args),
         _ => return None,
     })
 }
@@ -239,6 +243,16 @@ fn setup_locale_for(util: &str) {
 }
 
 fn main() -> ExitCode {
+    // Each `#[uucore::main]`-generated utility already restores SIGPIPE
+    // to its default disposition internally, but our own hand-written
+    // dispatch targets (tar/gzip/grep/sed/awk/curl/ps/...) don't get
+    // that for free — without this, e.g. `coreutils-rs ps aux | head`
+    // panics on a broken pipe instead of exiting quietly like every
+    // other Unix CLI. Matches pacman-rs's own identical fix.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     let argv: Vec<OsString> = std::env::args_os().collect();
     let exe_name = argv
         .first()

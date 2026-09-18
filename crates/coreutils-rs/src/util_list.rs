@@ -120,4 +120,7 @@ const UTILS: &[(&str, &str)] = &[
     // language to draw on at all — see sed_cmd.rs for the explicitly
     // scoped-down subset implemented here.
     ("sed", "archrs-native"),
+    // less is also its own separate project; vendors the `minus`
+    // terminal-pager crate instead — see less_cmd.rs.
+    ("less", "archrs-native"),
 ];

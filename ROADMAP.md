@@ -79,7 +79,7 @@ Reimplement libalpm + pacman in Rust, read-only first:
 Phase 1 is functionally complete: `pacman-rs` can query, resolve, install,
 upgrade, and remove packages against real Arch/Manjaro infrastructure.
 
-### Phase 2 — coreutils-rs (in progress)
+### Phase 2 — coreutils-rs (functionally complete)
 Rust reimplementations of core utilities used by the base install
 (ls, cp, mv, cat, grep, ...). Follow the prior art of `uutils/coreutils`
 rather than reinventing; adapt/vendor where sensible.
@@ -202,9 +202,27 @@ rather than reinventing; adapt/vendor where sensible.
         addressing, negation, `q`, capture-group backreferences (`-E`),
         `&`, a custom delimiter, multiple `-e`, `-i` and `-i.bak`, and
         stdin.
-  - [ ] `less` — candidate: the `minus` crate (an actual terminal-pager
-        library), scoped to basic scrolling/search rather than less's
-        full feature set.
+  - [x] `less` — vendored the `minus` crate (an actual terminal-pager
+        library — raw terminal mode, scroll state, search highlighting
+        aren't worth hand-rolling), via its `static_output` mode
+        (`src/less_cmd.rs`). Scrolling and `/`-search come from `minus`
+        itself. Not implemented: less's own feature set beyond that
+        (multiple files with `:n`/`:p`, marks, `-N` line numbers, etc.)
+        — `minus` doesn't expose those as building blocks. Falls back
+        to printing content directly when stdout isn't a terminal.
+        Verified two ways: the non-terminal fallback path is
+        byte-identical to `cat` for both a file argument and stdin.
+        The actual interactive pager can't be driven from this sandbox
+        the way the other utilities were regression-tested (it needs a
+        real terminal, not just a piped stdout), so instead it was
+        exercised over a genuine pseudo-tty (Python's `pty.openpty`):
+        confirmed it enters the alternate screen buffer and enables
+        mouse tracking on startup, then — after being sent `q` — cleanly
+        disables mouse tracking and exits the alternate screen buffer,
+        i.e. it starts and shuts down correctly. Actual line rendering
+        wasn't visible in that capture (the fake pty has no real window
+        size), so full visual/scrolling behavior is unverified beyond
+        that — worth a real terminal check before relying on it.
 
 ### Phase 3 — init & service management (started)
 Arch uses systemd. A from-scratch Rust init is a huge surface (cgroups,

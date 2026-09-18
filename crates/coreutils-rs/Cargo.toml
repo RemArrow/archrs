@@ -21,6 +21,7 @@ grep-matcher = "0.1"
 grep-regex = "0.1"
 grep-searcher = "0.1"
 regex = "1"
+minus = { version = "5", features = ["static_output", "search"] }
 uu_ls = "0.12"
 uu_cat = "0.12"
 uu_cp = "0.12"

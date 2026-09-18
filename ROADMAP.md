@@ -14,7 +14,7 @@ long-horizon project, tracked in phases below.
 
 ## Phases
 
-### Phase 1 — `alpm-rs` / `pacman-rs` (in progress)
+### Phase 1 — `alpm-rs` / `pacman-rs` (functionally complete)
 Reimplement libalpm + pacman in Rust, read-only first:
 - [x] Parse `pacman.conf`
 - [x] Parse local package DB (`/var/lib/pacman/local/*/desc`)
@@ -239,7 +239,7 @@ rather than reinventing; adapt/vendor where sensible.
         size), so full visual/scrolling behavior is unverified beyond
         that — worth a real terminal check before relying on it.
 
-### Phase 3 — init & service management (started)
+### Phase 3 — init & service management (functionally complete for its scoped goal — a minimal live-image init, not a systemd replacement)
 Arch uses systemd. A from-scratch Rust init is a huge surface (cgroups,
 dbus, unit files, udev). Realistic approach: scope down to a minimal
 Rust init for a custom "archrs" live image, not a systemd replacement

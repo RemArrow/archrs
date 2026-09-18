@@ -23,6 +23,7 @@ enum Op {
     Query,
     Sync,
     Remove,
+    InstallLocal,
 }
 
 struct Args {
@@ -89,6 +90,8 @@ fn parse_args() -> Result<Args> {
                     other => anyhow::bail!("unknown remove modifier: -{other}"),
                 }
             }
+        } else if arg.strip_prefix("-U").is_some_and(|flags| flags.is_empty()) {
+            set_op(&mut args, Op::InstallLocal)?;
         } else if arg == "--nodeps" {
             args.nodeps = true;
         } else if arg == "--root" {
@@ -105,7 +108,7 @@ fn parse_args() -> Result<Args> {
             ));
         } else if arg.starts_with('-') {
             anyhow::bail!(
-                "unsupported flag: {arg} (only -Q[ils], -S[ipyu], -R[s], --nodeps, --root, --dbpath, --cachedir are implemented so far)"
+                "unsupported flag: {arg} (only -Q[ils], -S[ipyu], -R[s], -U, --nodeps, --root, --dbpath, --cachedir are implemented so far)"
             );
         } else {
             args.targets.push(arg);
@@ -114,7 +117,7 @@ fn parse_args() -> Result<Args> {
 
     if args.op.is_none() {
         anyhow::bail!(
-            "usage: pacman-rs -Q[ils] [target...] | -S[ipyu] [target...] | -R[s] [--nodeps] target...\n\
+            "usage: pacman-rs -Q[ils] [target...] | -S[ipyu] [target...] | -R[s] [--nodeps] target... | -U file...\n\
              [--root DIR] [--dbpath DIR] [--cachedir DIR]\n\
              (see ROADMAP.md for what's implemented)"
         );
@@ -181,8 +184,63 @@ fn run() -> Result<()> {
         Some(Op::Query) => run_query(&args, &config),
         Some(Op::Sync) => run_sync(&args, &config),
         Some(Op::Remove) => run_remove(&args, &config),
+        Some(Op::InstallLocal) => run_install_local(&args, &config),
         None => unreachable!("parse_args requires an operation"),
     }
+}
+
+/// `-U`: install a local package file directly, without going through a
+/// sync repo — the same extraction/local-db path `-S` uses, just fed a
+/// `Package` read out of the archive's own `.PKGINFO` instead of one
+/// resolved from a sync db entry.
+fn run_install_local(args: &Args, config: &PacmanConfig) -> Result<()> {
+    if args.targets.is_empty() {
+        anyhow::bail!("no package file specified");
+    }
+
+    let local = LocalDb::open(&config.db_path);
+    let installed = local.packages().unwrap_or_default();
+
+    for target in &args.targets {
+        let archive_path = Path::new(target);
+        let pkg = alpm_rs::install::read_pkginfo(archive_path)
+            .with_context(|| format!("reading {target}"))?;
+
+        // Upgrading: same reasoning as -S's install_all — the local db
+        // is keyed by name-version, so the old version's directory
+        // would otherwise stick around after the new one is written.
+        if let Some(old) = installed
+            .iter()
+            .find(|p| p.name == pkg.name && p.version != pkg.version)
+        {
+            let old_dir = config
+                .db_path
+                .join("local")
+                .join(format!("{}-{}", old.name, old.version));
+            std::fs::remove_dir_all(&old_dir).ok();
+        }
+
+        // -U installs are explicit unless upgrading a package that was
+        // already installed as a dependency, which keeps its reason —
+        // same as -S's upgrade path.
+        let reason = match installed.iter().find(|p| p.name == pkg.name) {
+            Some(existing) if existing.reason.as_deref() == Some("1") => "dependency",
+            _ => "explicit",
+        };
+
+        println!(
+            "installing {} ({}) into {}...",
+            pkg.name,
+            pkg.version,
+            config.root_dir.display()
+        );
+        let files = extract_package(archive_path, &config.root_dir, &config.db_path, &pkg, reason)
+            .with_context(|| format!("extracting {target}"))?;
+        println!("  {} files installed", files.len());
+    }
+
+    println!("done.");
+    Ok(())
 }
 
 fn run_query(args: &Args, config: &PacmanConfig) -> Result<()> {

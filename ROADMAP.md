@@ -75,9 +75,24 @@ Reimplement libalpm + pacman in Rust, read-only first:
       installing `attr` alongside it (sharing glibc/filesystem/etc.) and
       then `-Rs acl` left every shared dependency in place and removed
       only `acl` itself, exactly matching real pacman's semantics.
+- [x] `-U` (install a local package file directly, e.g. one built by
+      `makepkg-rs` — see Phase 4): reads the archive's own `.PKGINFO`
+      (a different format from the local/sync db's `desc` file despite
+      describing the same package — added `parse_pkginfo`/
+      `write_pkginfo`/`read_pkginfo` to `alpm-rs` to handle it) rather
+      than resolving metadata from a sync db entry, then goes through
+      the same extraction/local-db path `-S` already used. Verified
+      end-to-end against a real cached Arch package
+      (`7zip-26.03-1-x86_64.pkg.tar.zst`): installed it with `-U` into a
+      sandboxed root and diffed the result against real `pacman -U`
+      installing the same archive into its own sandboxed root (with
+      `--nodeps` since neither sandbox has the dependency chain
+      installed) — identical file lists, and byte-identical installed
+      binaries (`md5sum` match).
 
 Phase 1 is functionally complete: `pacman-rs` can query, resolve, install,
-upgrade, and remove packages against real Arch/Manjaro infrastructure.
+upgrade, remove, and directly install local package files against real
+Arch/Manjaro infrastructure.
 
 ### Phase 2 — coreutils-rs (functionally complete)
 Rust reimplementations of core utilities used by the base install

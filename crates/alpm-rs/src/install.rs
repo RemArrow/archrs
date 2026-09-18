@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use tar::Archive;
 use thiserror::Error;
 
-use crate::package::Package;
+use crate::package::{self, Package};
 
 #[derive(Debug, Error)]
 pub enum InstallError {
@@ -17,6 +17,33 @@ pub enum InstallError {
     Extract(PathBuf, io::Error),
     #[error("failed to write local db entry at {0}: {1}")]
     WriteDb(PathBuf, io::Error),
+    #[error("{0} has no .PKGINFO member")]
+    MissingPkginfo(PathBuf),
+}
+
+/// Reads just the `.PKGINFO` member out of a `.pkg.tar.zst` archive —
+/// used to install a local package file directly (`pacman -U`), where
+/// (unlike a sync-db install) there's no separate metadata source to
+/// build a `Package` from ahead of time.
+pub fn read_pkginfo(archive_path: &Path) -> Result<Package, InstallError> {
+    let file = File::open(archive_path)
+        .map_err(|e| InstallError::OpenArchive(archive_path.to_path_buf(), e))?;
+    let decoder = zstd::stream::read::Decoder::new(file)
+        .map_err(|e| InstallError::OpenArchive(archive_path.to_path_buf(), e))?;
+    let mut archive = Archive::new(decoder);
+
+    for entry in archive.entries().map_err(InstallError::TarEntry)? {
+        let mut entry = entry.map_err(InstallError::TarEntry)?;
+        let path = entry.path().map_err(InstallError::TarEntry)?.to_path_buf();
+        if path.to_string_lossy() == ".PKGINFO" {
+            let mut text = String::new();
+            entry
+                .read_to_string(&mut text)
+                .map_err(InstallError::TarEntry)?;
+            return Ok(package::parse_pkginfo(&text));
+        }
+    }
+    Err(InstallError::MissingPkginfo(archive_path.to_path_buf()))
 }
 
 /// Extract a downloaded `.pkg.tar.zst` into `root`, and record it in the

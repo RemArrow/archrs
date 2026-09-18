@@ -396,6 +396,34 @@ bash replacement, makepkg equivalent, build tooling.
       assumes already exist rather than creating missing parents
       itself; fixed by using `tar::Builder::append_dir_all` instead of
       a file-only walk.
+- [x] `package()` runs under fakeroot, matching real makepkg. Vendored
+      `pseudoroot` (a real Rust fakeroot via `LD_PRELOAD` library
+      interposition — not something to hand-roll) rather than requiring
+      actual root or `sudo`. Verified for real: a `chown root:root`
+      call inside `package()` succeeds and `id` reports `uid=0` from
+      *inside* that fakeroot session, while a plain `ls`/`stat` run
+      *outside* it (a separate, unwrapped process) still shows the
+      real invoking user — confirming it's genuinely a same-process-
+      only illusion via interposition, not an actual privilege change,
+      exactly how real fakeroot works.
+      Caught a second real bug this surfaced: fakeroot only fakes what
+      the *wrapped subprocess's own* syscalls see. `package_archive`'s
+      tar-writing code runs in-process (no subprocess to wrap), so it
+      was reading genuine filesystem ownership (the build user, not
+      root) when writing tar headers — real makepkg avoids this by
+      building the tar itself from *inside* the same fakeroot session,
+      which isn't an option here. Fixed by forcing every tar entry's
+      uid/gid to 0/0 unconditionally at packaging time instead, which
+      matches fakeroot's own default behavior for the overwhelming
+      majority of real packages (ones that never explicitly chown to
+      some other uid) — confirmed the built archive now shows
+      `root/root` for every entry instead of the build user's real
+      uid/gid, with no regression to either previously-verified
+      end-to-end case.
+      Known gap: a PKGBUILD that deliberately assigns non-root
+      ownership to specific files (rare, e.g. a setgid directory) would
+      be recorded as root anyway, since forcing 0/0 doesn't distinguish
+      that case from the common one.
       Known gaps: single-package PKGBUILDs only (no split `pkgname=()`
       packages), no `.install` scriptlets, no PGP source verification,
       no dependency resolution before building (real makepkg would

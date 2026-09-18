@@ -22,7 +22,11 @@
 //!    recognized archive formats into `src/`.
 //! 3. Run `prepare`/`build`/`check` (whichever are defined) with `src/`
 //!    as the working directory and the usual PKGBUILD env vars set.
-//! 4. Run `package()` with `pkg/` as `$pkgdir`.
+//! 4. Run `package()` with `pkg/` as `$pkgdir`, under fakeroot (the
+//!    `pseudoroot` crate — a real Rust fakeroot via `LD_PRELOAD`
+//!    library interposition) so ownership/permission calls in
+//!    `package()` succeed without needing real root, same as real
+//!    makepkg. `prepare`/`build`/`check` run as the invoking user.
 //! 5. Tar+zstd `pkg/`'s contents into `<name>-<ver>-<rel>-<arch>.pkg.tar.zst`,
 //!    with a real `.PKGINFO` member (`alpm_rs::package::write_pkginfo`).
 //!
@@ -41,6 +45,7 @@ use std::process::Command;
 
 use alpm_rs::package::{Package, write_pkginfo};
 use anyhow::{Context, Result};
+use pseudoroot::FakerootCommandExt;
 
 const VARS: &[&str] = &[
     "pkgname",
@@ -317,20 +322,110 @@ fn run_pkgbuild_function(
     println!("makepkg-rs: running {func}()...");
     let script = format!("source ./PKGBUILD 2>/dev/null; cd \"$srcdir\" && {func}");
     let carch = std::env::consts::ARCH;
-    let output = bash_command()
-        .arg("-c")
+    let mut cmd = bash_command();
+    cmd.arg("-c")
         .arg(&script)
         .current_dir(startdir)
         .env("srcdir", srcdir)
         .env("pkgdir", pkgdir)
         .env("startdir", startdir)
-        .env("CARCH", carch)
-        .output()
-        .with_context(|| format!("running {func}()"))?;
+        .env("CARCH", carch);
+
+    // Real makepkg runs only the packaging step under fakeroot, so
+    // ownership/permission calls in package() (chown root:root, etc.)
+    // succeed without actually needing root — prepare/build/check run
+    // as the invoking user, same as real makepkg.
+    let output = if func == "package" {
+        cmd.fakeroot().output()
+    } else {
+        cmd.output()
+    }
+    .with_context(|| format!("running {func}()"))?;
     print!("{}", String::from_utf8_lossy(&output.stdout));
     eprint!("{}", String::from_utf8_lossy(&output.stderr));
     if !output.status.success() {
         anyhow::bail!("{func}() failed");
+    }
+    Ok(())
+}
+
+/// Every entry `package_archive` writes for `pkgdir`'s own contents,
+/// separated from `write_header_forcing_root` so both directories and
+/// files can share the same "force root ownership" header logic.
+enum Entry {
+    Dir(PathBuf),
+    File(PathBuf),
+}
+
+fn walk_all(dir: &Path) -> Result<Vec<Entry>> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let mut children: Vec<PathBuf> = fs::read_dir(&current)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .collect();
+        children.sort();
+        for path in children {
+            if path.is_dir() {
+                out.push(Entry::Dir(path.clone()));
+                stack.push(path);
+            } else {
+                out.push(Entry::File(path));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Writes one tar entry with its uid/gid forced to 0/0 (root), keeping
+/// everything else (mode, mtime, size) from the real filesystem.
+///
+/// This is the packaging-time equivalent of running under fakeroot:
+/// `package()` itself already runs under a real fakeroot session (see
+/// `run_pkgbuild_function`) so ownership calls *inside* it succeed, but
+/// that session only fakes what that one subprocess's own syscalls see
+/// — it can't retroactively change what *this* process (building the
+/// tar afterward, in-process, no subprocess involved) reads back from
+/// the real filesystem, which is still genuinely owned by the invoking
+/// user. Real makepkg avoids this by building the tar itself from
+/// *inside* the same fakeroot session. We don't have that option
+/// (there's no subprocess here to wrap), so instead this forces root
+/// ownership unconditionally on every entry — correct for the
+/// overwhelming majority of real packages, which rely on fakeroot's
+/// ambient default (root) rather than `package()` explicitly chowning
+/// specific files to some other uid/gid. A PKGBUILD that deliberately
+/// assigns non-root ownership to a subset of files would be recorded
+/// as root anyway — a known, documented gap.
+fn write_root_owned_entry<W: Write>(
+    builder: &mut tar::Builder<W>,
+    entry: &Entry,
+    pkgdir: &Path,
+) -> Result<()> {
+    let (path, is_dir) = match entry {
+        Entry::Dir(p) => (p, true),
+        Entry::File(p) => (p, false),
+    };
+    let rel = path.strip_prefix(pkgdir)?;
+    let metadata = fs::symlink_metadata(path)?;
+
+    let mut header = tar::Header::new_gnu();
+    header.set_metadata(&metadata);
+    header.set_uid(0);
+    header.set_gid(0);
+    header.set_username("root").ok();
+    header.set_groupname("root").ok();
+
+    if is_dir {
+        header.set_entry_type(tar::EntryType::Directory);
+        header.set_size(0);
+        header.set_cksum();
+        builder.append_data(&mut header, rel, std::io::empty())?;
+    } else {
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_cksum();
+        let mut file = File::open(path)?;
+        builder.append_data(&mut header, rel, &mut file)?;
     }
     Ok(())
 }
@@ -340,45 +435,30 @@ fn package_archive(pkgdir: &Path, pkg: &Package, out_path: &Path) -> Result<u64>
     let encoder = zstd::Encoder::new(file, 0)?.auto_finish();
     let mut builder = tar::Builder::new(encoder);
 
-    let total_size: u64 = walk_files(pkgdir)?
+    let entries = walk_all(pkgdir)?;
+    let total_size: u64 = entries
         .iter()
-        .map(|p| p.metadata().map(|m| m.len()).unwrap_or(0))
+        .filter_map(|e| match e {
+            Entry::File(p) => p.metadata().ok().map(|m| m.len()),
+            Entry::Dir(_) => None,
+        })
         .sum();
 
     let pkginfo = write_pkginfo(pkg, "archrs <makepkg-rs@localhost>", now(), total_size);
     let mut header = tar::Header::new_gnu();
     header.set_size(pkginfo.len() as u64);
     header.set_mode(0o644);
+    header.set_uid(0);
+    header.set_gid(0);
     header.set_cksum();
     builder.append_data(&mut header, ".PKGINFO", pkginfo.as_bytes())?;
 
-    // `append_dir_all` (rather than a manual file-only walk) matters
-    // here: it emits a real tar entry for every ancestor directory, not
-    // just the files. pacman-rs's own extractor (like real pacman's)
-    // assumes those directory entries already exist in the archive and
-    // doesn't create missing parents before unpacking a file — the same
-    // way a real makepkg-built package is laid out.
-    builder.append_dir_all("", pkgdir)?;
+    for entry in &entries {
+        write_root_owned_entry(&mut builder, entry, pkgdir)?;
+    }
 
     builder.into_inner()?.flush()?;
     Ok(total_size)
-}
-
-fn walk_files(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut out = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        for entry in fs::read_dir(&current)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else {
-                out.push(path);
-            }
-        }
-    }
-    Ok(out)
 }
 
 fn now() -> i64 {

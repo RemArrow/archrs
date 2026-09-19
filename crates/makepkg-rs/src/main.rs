@@ -16,10 +16,14 @@
 //!    variables via `declare -p` (and its function names via
 //!    `declare -F`) — see `read_pkgbuild`.
 //! 2. Download each `source=()` entry that's a URL (`ureq`, matching
-//!    how `alpm-rs` already fetches real package archives), verify
-//!    against `sha256sums=()` (`alpm_rs::verify`, `"SKIP"` entries
-//!    skip verification, same convention as real makepkg), and extract
-//!    recognized archive formats into `src/`.
+//!    how `alpm-rs` already fetches real package archives), verify it
+//!    against whichever of `b2sums`/`sha512sums`/`sha256sums` the
+//!    PKGBUILD defines (`alpm_rs::verify::ChecksumKind`; `"SKIP"`
+//!    entries skip verification, same convention as real makepkg —
+//!    but a remote source with *no* recognized checksum at all is a
+//!    hard error, not a silent pass-through, see `prepare_sources`),
+//!    and extract recognized archive formats
+//!    (`.tar`/`.tar.gz`/`.tar.zst`/`.zip`) into `src/`.
 //! 3. Run `prepare`/`build`/`check` (whichever are defined) with `src/`
 //!    as the working directory and the usual PKGBUILD env vars set.
 //! 4. Run `package()` with `pkg/` as `$pkgdir`, under fakeroot (the
@@ -30,12 +34,24 @@
 //! 5. Tar+zstd `pkg/`'s contents into `<name>-<ver>-<rel>-<arch>.pkg.tar.zst`,
 //!    with a real `.PKGINFO` member (`alpm_rs::package::write_pkginfo`).
 //!
+//! Hardened against two real AUR packages, not just synthetic test
+//! PKGBUILDs (see ROADMAP.md's "Hardened against real AUR packages"
+//! section for the full story): `tty-clock` (real `prepare()`/
+//! `build()`, local auxiliary source files, `b2sums` — which the
+//! checksum handling above didn't originally support at all, a real
+//! caught-by-testing security gap, not a hypothetical one) and
+//! `cbonsai` (a GitLab `.zip` source, compiling inside `package()`
+//! with no separate `build()`). Both built, installed via
+//! `pacman-rs -U`, and ran successfully.
+//!
 //! Scope/known gaps: single-package PKGBUILDs only (no `pkgname=()`
 //! split packages), no `.install` scriptlets, no PGP source
-//! verification, no `noextract`/per-source `cksums` variants beyond
-//! `sha256sums`, and the `declare -p` output parser handles the common
-//! case (quoted scalars and indexed arrays) rather than being a fully
-//! shell-quoting-aware parser.
+//! verification, no `noextract`, `md5sums`/`sha1sums`/`sha224sums`/
+//! `sha384sums`/`cksums` (real but rare checksum variants — an entry
+//! using only one of these is treated as unverifiable, see above,
+//! same as having none at all), and the `declare -p` output parser
+//! handles the common case (quoted scalars and indexed arrays) rather
+//! than being a fully shell-quoting-aware parser.
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -61,6 +77,8 @@ const VARS: &[&str] = &[
     "conflicts",
     "source",
     "sha256sums",
+    "sha512sums",
+    "b2sums",
 ];
 
 #[derive(Debug, Default)]
@@ -254,6 +272,10 @@ fn download(url: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `.zip` sources are real, not hypothetical: GitLab's own archive
+/// URLs (`.../-/archive/vX.Y.Z/name-vX.Y.Z.zip`, the format several
+/// real AUR PKGBUILDs use for GitLab-hosted upstreams) default to zip,
+/// unlike GitHub's tarballs.
 fn extract_archive(path: &Path, dest_dir: &Path) -> Result<bool> {
     let name = path.to_string_lossy();
     let file = File::open(path)?;
@@ -263,26 +285,75 @@ fn extract_archive(path: &Path, dest_dir: &Path) -> Result<bool> {
         tar::Archive::new(zstd::Decoder::new(file)?).unpack(dest_dir)?;
     } else if name.ends_with(".tar") {
         tar::Archive::new(file).unpack(dest_dir)?;
+    } else if name.ends_with(".zip") {
+        zip::ZipArchive::new(file)
+            .context("reading zip archive")?
+            .extract(dest_dir)
+            .context("extracting zip archive")?;
     } else {
         return Ok(false);
     }
     Ok(true)
 }
 
+/// The `*sums=()` arrays this tool knows how to check, in the order
+/// real PKGBUILDs are checked against `alpm_rs::verify::ChecksumKind`
+/// — `b2sums` first (BLAKE2b-512, makepkg's own modern default),
+/// `sha512sums`, then `sha256sums`. Real makepkg additionally accepts
+/// `md5sums`/`sha1sums`/`sha224sums`/`sha384sums`/`cksums`, which
+/// aren't implemented (rare in practice); a PKGBUILD using only one of
+/// those is treated the same as having no checksum at all (see below).
+const CHECKSUM_ARRAYS: &[(&str, alpm_rs::verify::ChecksumKind)] = &[
+    ("b2sums", alpm_rs::verify::ChecksumKind::Blake2b),
+    ("sha512sums", alpm_rs::verify::ChecksumKind::Sha512),
+    ("sha256sums", alpm_rs::verify::ChecksumKind::Sha256),
+];
+
 /// Downloads (or copies, for local files) and verifies each
 /// `source=()` entry, extracting recognized archive formats into
 /// `srcdir` and copying everything else in as-is — matching real
 /// makepkg's default (non-`noextract`) behavior.
+///
+/// A remote source with no checksum this tool can verify (none of
+/// `CHECKSUM_ARRAYS` has an entry for it, and it isn't marked `SKIP`)
+/// is a hard error, not a silent pass-through: downloading and
+/// building from an unverified remote file defeats the entire point
+/// of `source=()` integrity checking. Real makepkg errors the same
+/// way by default (`--skipinteg` opts out explicitly); this has no
+/// equivalent opt-out, since nothing in this project's own pipeline
+/// currently needs one.
 fn prepare_sources(startdir: &Path, srcdir: &Path, pkgbuild: &PkgBuild) -> Result<()> {
     fs::create_dir_all(srcdir)?;
     let sources = pkgbuild.array("source");
-    let sums = pkgbuild.array("sha256sums");
 
     for (i, entry) in sources.iter().enumerate() {
         let (filename, location) = source_dest_and_url(entry);
         let dest = srcdir.join(&filename);
+        let is_remote = looks_like_url(&location);
 
-        if looks_like_url(&location) {
+        // Collect every recognized checksum entry for this source
+        // before downloading anything, so an unverifiable remote
+        // source is rejected up front rather than after wasting a
+        // download.
+        let mut checks: Vec<(&str, alpm_rs::verify::ChecksumKind, &str)> = Vec::new();
+        let mut any_skip = false;
+        for (var, kind) in CHECKSUM_ARRAYS {
+            if let Some(expected) = pkgbuild.array(var).get(i) {
+                if expected == "SKIP" {
+                    any_skip = true;
+                } else {
+                    checks.push((var, *kind, expected.as_str()));
+                }
+            }
+        }
+        if is_remote && checks.is_empty() && !any_skip {
+            anyhow::bail!(
+                "{filename}: no recognized checksum (b2sums/sha512sums/sha256sums) to verify \
+                 this remote source against — refusing to download and build unverified"
+            );
+        }
+
+        if is_remote {
             println!("makepkg-rs: downloading {filename}...");
             download(&location, &dest)?;
         } else {
@@ -291,15 +362,13 @@ fn prepare_sources(startdir: &Path, srcdir: &Path, pkgbuild: &PkgBuild) -> Resul
                 .with_context(|| format!("copying local source {}", src_path.display()))?;
         }
 
-        if let Some(expected) = sums.get(i)
-            && expected != "SKIP"
-        {
-            let ok = alpm_rs::verify::verify_checksum(&dest, expected)
+        for (var, kind, expected) in &checks {
+            let ok = alpm_rs::verify::verify_source_checksum(&dest, *kind, expected)
                 .with_context(|| format!("checksumming {filename}"))?;
             if !ok {
-                anyhow::bail!("sha256 mismatch for {filename}");
+                anyhow::bail!("{var} mismatch for {filename}");
             }
-            println!("makepkg-rs: {filename} sha256 OK");
+            println!("makepkg-rs: {filename} {var} OK");
         }
 
         if extract_archive(&dest, srcdir)? {

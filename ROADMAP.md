@@ -505,6 +505,56 @@ bash replacement, makepkg equivalent, build tooling.
       doesn't check), and the `declare -p` output parser handles the
       common case (quoted scalars, indexed arrays) rather than being
       fully shell-quoting-aware.
+
+**Hardened against real AUR packages (2026-09-19).** Every prior
+`makepkg-rs` check above used synthetic, hand-written test PKGBUILDs —
+a real, distinct gap, since only a real PKGBUILD exercises the actual
+variety (checksum algorithms, archive formats, multi-file git repos)
+real upstream maintainers use. Cloned two real AUR packages via `git
+clone` (the way an actual user gets one, pulling in every auxiliary
+file, not just the PKGBUILD) and built each with `makepkg-rs`, then
+installed the result with `pacman-rs -U` and ran the built binary:
+- `tty-clock` — real `prepare()` applying a real patch file, `build()`
+  running `make`, `package()` using `install -D`, and two local
+  (non-URL) auxiliary source files (a patch, a LICENSE) that only
+  exist in the package's own git repo. Caught a real, security-
+  relevant gap immediately: this PKGBUILD uses `b2sums` (BLAKE2b-512,
+  makepkg's own modern default), which this tool didn't recognize at
+  all — checksum verification was silently skipped entirely rather
+  than erroring, meaning a corrupted or tampered download would have
+  gone completely unnoticed.
+- `cbonsai` — a GitLab-hosted `.zip` source (`sha256sums`, not
+  `b2sums`) with no separate `build()`, doing real compilation
+  *inside* `package()` via `make ... install`. Caught a second real
+  gap: `.zip` wasn't a recognized archive format at all (only
+  `.tar`/`.tar.gz`/`.tar.zst` were), which would have failed outright
+  on any GitLab-archive-sourced package — a real, common shape, not a
+  corner case, since GitLab's own archive URLs default to zip where
+  GitHub's default to tarballs.
+
+Both real fixes:
+1. Added `alpm_rs::verify::ChecksumKind` (`Blake2b`/`Sha512`, alongside
+   the existing `Sha256`) via the `blake2` crate, matched against
+   known-vector unit tests the same way `sha256_hex` already was.
+   `makepkg-rs` now checks `b2sums`/`sha512sums`/`sha256sums` (whichever
+   are present, all of them if more than one is), and — this is the
+   real hardening, not just added coverage — now **refuses to build at
+   all** when a remote source has no checksum entry this tool can
+   verify (an entry using an unsupported algorithm like `md5sums`
+   counts as none), rather than silently proceeding unverified the way
+   the original single-algorithm check did. `SKIP` entries are still
+   honored, matching real makepkg's own convention. Verified the
+   refusal directly with a synthetic PKGBUILD carrying only an
+   `md5sums` entry (correctly rejected) and confirmed `SKIP` still
+   builds normally.
+2. Vendored the `zip` crate (2.x) for `.zip` extraction, alongside the
+   existing tar-based formats.
+Both real packages built, installed via `pacman-rs -U` into a real
+root, and ran successfully afterward (`tty-clock`'s real ncurses
+display rendered the actual current date; `cbonsai`'s compiled binary
+installed as a genuine, correctly linked ELF executable) — the same
+two-stage verification (build, then actually install and run) already
+established for the synthetic-PKGBUILD checks above.
 - [x] `which` and `patch` — the remaining small, well-scoped
       base-devel-adjacent utilities PKGBUILDs commonly need. `which`
       vendors the `which` crate (real cross-platform `PATH` lookup);

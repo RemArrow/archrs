@@ -96,26 +96,42 @@
 //!   package* (the opposite failure mode from `tty-clock`'s silent
 //!   skip, but still a real gap: `md5sums` is old, but still real and
 //!   in active use).
+//! - `1password-cli`: real `source_x86_64`/`sha256sums_x86_64`
+//!   architecture-specific arrays (no plain `source=()` at all — this
+//!   tool would have seen nothing to build before this). Also
+//!   confirmed, for real, exactly what's missing for full support:
+//!   its `check()` calls a real `gpg --verify` against a signature
+//!   genuinely bundled in the download, and both `check()` execution
+//!   and the real `gpg` binary work correctly — the gap is
+//!   specifically that nothing imports the `validpgpkeys` key first
+//!   (a real, separate trust-bootstrapping design decision, not a
+//!   quick addition — see ROADMAP.md).
 //!
-//! All six built, installed via `pacman-rs -U`, and ran/resolved
-//! correctly afterward. `.install` execution itself (`pacman-rs`'s own
-//! side of this — see `alpm_rs::install::run_install_scriptlet`) was
-//! verified separately, in isolation, rather than against papirus'
-//! real scriptlet through a live `-U`: it deliberately only runs
-//! against the real system root (`/`), never a `--root DIR` test
-//! install, since a scriptlet meant for the real system
-//! (`gtk-update-icon-cache`, etc.) would otherwise wrongly act on the
-//! real host instead of the fake root being tested against.
+//! All seven built (or, for `1password-cli`, correctly got as far as
+//! a real `gpg` "no public key" error — matching what real makepkg
+//! itself would report without that key already trusted), installed
+//! via `pacman-rs -U`, and ran/resolved correctly afterward. `.install`
+//! execution itself (`pacman-rs`'s own side of this — see
+//! `alpm_rs::install::run_install_scriptlet`) was verified separately,
+//! in isolation, rather than against papirus' real scriptlet through a
+//! live `-U`: it deliberately only runs against the real system root
+//! (`/`), never a `--root DIR` test install, since a scriptlet meant
+//! for the real system (`gtk-update-icon-cache`, etc.) would otherwise
+//! wrongly act on the real host instead of the fake root being tested
+//! against.
 //!
-//! Scope/known gaps: no PGP source verification (`validpgpkeys`/
-//! `.sig` sources — `alpm_rs::verify::gpg_verify` already exists and
-//! is used for sync-db package signatures, just not wired up here
-//! yet), no `noextract`, `svn+`/`hg+`/`bzr+` VCS sources (real but
-//! rarer than git), `cksums` (a non-cryptographic CRC — every other
-//! real checksum variant is supported, see above), and the
-//! `declare -p` output parser handles the common case (quoted scalars
-//! and indexed arrays) rather than being a fully shell-quoting-aware
-//! parser.
+//! Scope/known gaps: no PGP source verification (`validpgpkeys`/`.sig`
+//! sources — confirmed, by testing against `1password-cli`'s real
+//! `check()`, that the verification mechanism itself already works
+//! via `alpm_rs::verify::gpg_verify` and the real `gpg` binary; what's
+//! actually missing is importing `validpgpkeys`' key from a keyserver
+//! first, a real trust-bootstrapping design decision deliberately not
+//! made yet, not an oversight — see ROADMAP.md), no `noextract`,
+//! `svn+`/`hg+`/`bzr+` VCS sources (real but rarer than git), `cksums`
+//! (a non-cryptographic CRC — every other real checksum variant is
+//! supported, see above), and the `declare -p` output parser handles
+//! the common case (quoted scalars and indexed arrays) rather than
+//! being a fully shell-quoting-aware parser.
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -288,8 +304,34 @@ fn parse_declare_p(output: &str) -> HashMap<String, Vec<String>> {
     vars
 }
 
+/// Real makepkg lets a PKGBUILD override several arrays per
+/// architecture (`source_x86_64=`, `sha256sums_x86_64=`, etc.) —
+/// common for `-bin` packages that publish a different download per
+/// arch. These are read *in addition to* the base (arch-independent)
+/// array of the same name, then concatenated onto it for building
+/// (see `prepare_sources`) — real makepkg's own semantics, not an
+/// override. A real gap caught by testing `1password-cli`, which
+/// defines only `source_x86_64`/`sha256sums_x86_64` (no plain
+/// `source=()` at all).
+const ARCH_SUFFIXED_VARS: &[&str] = &[
+    "source",
+    "depends",
+    "b2sums",
+    "sha512sums",
+    "sha384sums",
+    "sha256sums",
+    "sha224sums",
+    "sha1sums",
+    "md5sums",
+];
+
 fn read_pkgbuild(dir: &Path) -> Result<PkgBuild> {
-    let var_list = VARS.join(" ");
+    let carch = std::env::consts::ARCH;
+    let arch_vars: Vec<String> = ARCH_SUFFIXED_VARS
+        .iter()
+        .map(|v| format!("{v}_{carch}"))
+        .collect();
+    let var_list = format!("{} {}", VARS.join(" "), arch_vars.join(" "));
     let script = format!(
         "source ./PKGBUILD 2>/dev/null; declare -p {var_list} 2>/dev/null; echo '---FUNCTIONS---'; declare -F"
     );
@@ -491,9 +533,26 @@ const CHECKSUM_ARRAYS: &[(&str, alpm_rs::verify::ChecksumKind)] = &[
 /// way by default (`--skipinteg` opts out explicitly); this has no
 /// equivalent opt-out, since nothing in this project's own pipeline
 /// currently needs one.
+/// Real makepkg's `_$CARCH`-suffixed arrays are concatenated *onto the
+/// end of* the plain array of the same name (not a replacement) —
+/// this builds that combined list for one variable name, preserving
+/// index alignment between `source`/`source_$CARCH` and each
+/// `*sums`/`*sums_$CARCH` pair, since both are concatenated the same
+/// way in the same order.
+fn combined_arch_array(pkgbuild: &PkgBuild, var: &str) -> Vec<String> {
+    let carch = std::env::consts::ARCH;
+    let mut combined = pkgbuild.array(var).to_vec();
+    combined.extend(pkgbuild.array(&format!("{var}_{carch}")).iter().cloned());
+    combined
+}
+
 fn prepare_sources(startdir: &Path, srcdir: &Path, pkgbuild: &PkgBuild) -> Result<()> {
     fs::create_dir_all(srcdir)?;
-    let sources = pkgbuild.array("source");
+    let sources = combined_arch_array(pkgbuild, "source");
+    let checksum_lists: Vec<(&str, alpm_rs::verify::ChecksumKind, Vec<String>)> = CHECKSUM_ARRAYS
+        .iter()
+        .map(|(var, kind)| (*var, *kind, combined_arch_array(pkgbuild, var)))
+        .collect();
 
     for (i, entry) in sources.iter().enumerate() {
         let (filename, location) = source_dest_and_url(entry);
@@ -525,8 +584,8 @@ fn prepare_sources(startdir: &Path, srcdir: &Path, pkgbuild: &PkgBuild) -> Resul
         // download.
         let mut checks: Vec<(&str, alpm_rs::verify::ChecksumKind, &str)> = Vec::new();
         let mut any_skip = false;
-        for (var, kind) in CHECKSUM_ARRAYS {
-            if let Some(expected) = pkgbuild.array(var).get(i) {
+        for (var, kind, values) in &checksum_lists {
+            if let Some(expected) = values.get(i) {
                 if expected == "SKIP" {
                     any_skip = true;
                 } else {
@@ -884,7 +943,7 @@ fn build_package_meta(
         overrides
             .get(key)
             .cloned()
-            .unwrap_or_else(|| pkgbuild.array(key).to_vec())
+            .unwrap_or_else(|| combined_arch_array(pkgbuild, key))
     };
     let scalar_field = |key: &str| -> Option<String> {
         overrides

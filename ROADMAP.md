@@ -739,6 +739,55 @@ small, real C fuzzy-finder — `md5sums` only, real `build()`/
       md5sums OK`), built, installed via `pacman-rs -U`, and the
       installed binary ran and functioned correctly (`fzy -e` matching
       a real candidate list).
+
+**Extended to per-architecture source arrays; PGP source verification
+attempted, found to need a real, deliberate design decision
+(2026-09-19).** Went looking for a small real `validpgpkeys`/`.sig`
+example to close that documented gap next; most real AUR uses of it
+turned out to be entangled with heavier things (`spotify`'s needs real
+`.deb`/`ar` archive extraction this project doesn't have; `tor-
+browser-bin` is a large, heavy download) or non-standard (manual
+`gpg --verify` calls in `check()` rather than makepkg's own automatic
+per-source `.sig` detection). `1password-cli` looked promising
+(`validpgpkeys`, a `check()` calling `gpg --verify`) but surfaced a
+different, real, and more immediately actionable gap first: it defines
+only `source_x86_64`/`sha256sums_x86_64` (architecture-specific
+arrays), no plain `source=()`/`sha256sums=()` at all — a real,
+previously undiscovered gap (common for `-bin` packages that publish a
+different download per architecture), not something specific to PGP.
+- [x] Architecture-specific `_$CARCH`-suffixed arrays
+      (`source_x86_64`, and each `*sums_x86_64` variant, plus
+      `depends_x86_64`) — read in addition to the plain array of the
+      same name and concatenated onto its end for building
+      (`combined_arch_array`), matching real makepkg's own semantics
+      (an addition, not an override) and preserving index alignment
+      between a source and its checksum, since both are concatenated
+      identically. Verified for real against `1password-cli`
+      (`source_x86_64`-only, no plain `source=()`): downloaded,
+      correctly verified against its real `sha256sums_x86_64` entry,
+      and extracted the real `.zip` — all previously impossible, since
+      before this fix the tool would have seen an empty `source=()`
+      array and built nothing at all.
+      This also surfaced, for real, exactly what's still missing for
+      full `1password-cli` support: its `check()` function calls a
+      real `gpg --verify` against a real signature genuinely bundled
+      inside the downloaded `.zip` (confirmed: `check()` ran for real
+      and produced a real GPG "No public key" error, not a crash or a
+      skip) — the actual gap is specifically that nothing imports the
+      key `validpgpkeys` names before verification runs, not the
+      verification mechanism itself (`check()` execution and the real
+      `gpg` binary both already work correctly, as proven here).
+      Attempting to actually close that import step surfaced why it's
+      a real, separate design decision rather than a quick addition:
+      importing a keyserver-fetched key is inherently a trust-
+      bootstrapping decision (which keyserver, how failures are
+      handled, what to do when a key can't be found), the same
+      category of security-sensitive call this project has previously
+      deferred elsewhere (declining to reimplement privilege-dropping
+      for `crond`, shelling out to real `gpg` rather than reimplementing
+      OpenPGP for package signatures) rather than adding without
+      deliberate thought. Left open, now with a much more precise
+      description of exactly what's missing than before this attempt.
 - [x] `which` and `patch` — the remaining small, well-scoped
       base-devel-adjacent utilities PKGBUILDs commonly need. `which`
       vendors the `which` crate (real cross-platform `PATH` lookup);

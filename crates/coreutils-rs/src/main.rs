@@ -26,6 +26,7 @@ use std::vec::IntoIter;
 mod awk_cmd;
 mod column_cmd;
 mod curl_cmd;
+mod dhcp_cmd;
 mod diff_cmd;
 mod dmesg_cmd;
 mod file_cmd;
@@ -243,6 +244,7 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "reboot" => power_cmd::run_reboot(args),
         "poweroff" | "halt" => power_cmd::run_poweroff(args),
         "shutdown" => power_cmd::run_shutdown(args),
+        "dhcpc" => dhcp_cmd::run(args),
         _ => return None,
     })
 }

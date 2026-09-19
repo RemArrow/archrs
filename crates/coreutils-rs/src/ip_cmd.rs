@@ -36,14 +36,23 @@
 //! rather than byte-identical — same standard as `ps aux`/`ss`
 //! elsewhere in this crate.
 //!
-//! Not implemented: any write operation (`ip link set`, `ip addr add`,
-//! `ip route add` — this phase is visibility only, matching `ss`
-//! before it), `ip -6 route`, `ip neigh`/`ip rule`, JSON output,
-//! filtering by device name (always lists everything, like `ip a`
-//! with no arguments).
+//! Phase 9 added real write operations too, the other half of this same
+//! `rtnetlink` machinery: `ip link set DEV up|down` (`RTM_SETLINK`),
+//! `ip addr add|del CIDR dev DEV` (`RTM_NEWADDR`/`RTM_DELADDR`), and
+//! `ip route add default via GW dev DEV` (`RTM_NEWROUTE`) — the same
+//! three real code paths `dhcp_cmd.rs`'s DHCP client calls directly
+//! (`set_link_up`/`add_address`/`add_default_route`, `pub(crate)`) to
+//! actually configure an interface after a real lease, rather than
+//! shelling back out to this binary's own CLI a second time.
+//!
+//! Not implemented: `ip -6 route`, `ip neigh`/`ip rule`, JSON output,
+//! filtering by device name for the read side (always lists
+//! everything, like `ip a` with no arguments), `ip route add` to a
+//! non-default destination or via a non-gateway nexthop, `ip route
+//! del`, `ip addr add`'s optional `broadcast`/`label`/`scope` flags.
 
 use netlink_packet_core::{
-    NLM_F_DUMP, NLM_F_REQUEST, NetlinkHeader, NetlinkMessage, NetlinkPayload,
+    NLM_F_ACK, NLM_F_DUMP, NLM_F_REQUEST, NetlinkHeader, NetlinkMessage, NetlinkPayload,
 };
 use netlink_packet_route::AddressFamily;
 use netlink_packet_route::RouteNetlinkMessage;
@@ -108,7 +117,164 @@ fn netlink_dump(payload: RouteNetlinkMessage) -> Result<Vec<RouteNetlinkMessage>
     Ok(results)
 }
 
-fn get_links() -> Result<Vec<LinkMessage>, String> {
+/// Sends one non-dump `RTM_*` request (`NEW`/`SET`/`DEL`) and waits for
+/// the kernel's ACK — the write-side counterpart to `netlink_dump`
+/// above, which only handles multipart dump replies. A netlink ACK is
+/// itself an error message with error code 0, which is exactly what
+/// `NetlinkPayload::Error(e)` carries either way — `e.code` distinguishes
+/// a real failure (`Some(errno)`) from a plain ACK (`None`).
+fn netlink_request(payload: RouteNetlinkMessage, extra_flags: u16) -> Result<(), String> {
+    let mut socket =
+        Socket::new(NETLINK_ROUTE).map_err(|e| format!("opening netlink socket: {e}"))?;
+    socket
+        .bind_auto()
+        .map_err(|e| format!("binding netlink socket: {e}"))?;
+    let kernel_addr = SocketAddr::new(0, 0);
+    socket
+        .connect(&kernel_addr)
+        .map_err(|e| format!("connecting netlink socket: {e}"))?;
+
+    let mut header = NetlinkHeader::default();
+    header.flags = NLM_F_REQUEST | NLM_F_ACK | extra_flags;
+    header.sequence_number = 1;
+    let mut request = NetlinkMessage::new(header, NetlinkPayload::InnerMessage(payload));
+    request.finalize();
+    let mut buf = vec![0u8; request.buffer_len()];
+    request.serialize(&mut buf);
+    socket
+        .send(&buf, 0)
+        .map_err(|e| format!("sending netlink request: {e}"))?;
+
+    let (packet, _) = socket
+        .recv_from_full()
+        .map_err(|e| format!("receiving netlink reply: {e}"))?;
+    let msg = NetlinkMessage::<RouteNetlinkMessage>::deserialize(&packet)
+        .map_err(|e| format!("parsing netlink reply: {e}"))?;
+    match msg.payload {
+        NetlinkPayload::Error(e) if e.code.is_some() => Err(format!("netlink error: {e:?}")),
+        NetlinkPayload::Error(_) => Ok(()), // code None == plain ACK
+        other => Err(format!("unexpected netlink reply: {other:?}")),
+    }
+}
+
+/// Looks up an interface's real `rtnetlink` index by name — every write
+/// operation below needs this first, same as real `ip` resolving `dev
+/// NAME` to an index before building its own request.
+pub(crate) fn find_link_index(name: &str) -> Result<u32, String> {
+    get_links()?
+        .into_iter()
+        .find(|l| link_name(l) == name)
+        .map(|l| l.header.index)
+        .ok_or_else(|| format!("device \"{name}\" does not exist"))
+}
+
+/// `ip link set DEV up|down` — `RTM_SETLINK` with `IFF_UP` in both
+/// `flags` (the value to set it to) and `change_mask` (which bit this
+/// request is actually allowed to change; every other bit in `flags` is
+/// ignored by the kernel without its own bit set in `change_mask`).
+pub(crate) fn set_link_up(index: u32, up: bool) -> Result<(), String> {
+    use netlink_packet_route::link::LinkFlags;
+    let mut msg = LinkMessage::default();
+    msg.header.index = index;
+    msg.header.flags = if up {
+        LinkFlags::Up
+    } else {
+        LinkFlags::empty()
+    };
+    msg.header.change_mask = LinkFlags::Up;
+    netlink_request(RouteNetlinkMessage::SetLink(msg), 0)
+}
+
+/// `ip addr add CIDR dev DEV` — `RTM_NEWADDR`. `NLM_F_CREATE|NLM_F_EXCL`
+/// matches real `ip addr add`'s own semantics: create a new address,
+/// fail if that exact address already exists (rather than replacing it,
+/// which is what plain `NLM_F_CREATE` alone or `NLM_F_REPLACE` would do).
+pub(crate) fn add_address(
+    index: u32,
+    addr: std::net::IpAddr,
+    prefix_len: u8,
+) -> Result<(), String> {
+    use netlink_packet_core::{NLM_F_CREATE, NLM_F_EXCL};
+    let family = if addr.is_ipv4() {
+        AddressFamily::Inet
+    } else {
+        AddressFamily::Inet6
+    };
+    let mut msg = AddressMessage::default();
+    msg.header.family = family;
+    msg.header.prefix_len = prefix_len;
+    msg.header.index = index;
+    msg.attributes.push(AddressAttribute::Local(addr));
+    msg.attributes.push(AddressAttribute::Address(addr));
+    netlink_request(
+        RouteNetlinkMessage::NewAddress(msg),
+        NLM_F_CREATE | NLM_F_EXCL,
+    )
+}
+
+/// `ip addr del CIDR dev DEV` — `RTM_DELADDR`.
+pub(crate) fn del_address(
+    index: u32,
+    addr: std::net::IpAddr,
+    prefix_len: u8,
+) -> Result<(), String> {
+    let family = if addr.is_ipv4() {
+        AddressFamily::Inet
+    } else {
+        AddressFamily::Inet6
+    };
+    let mut msg = AddressMessage::default();
+    msg.header.family = family;
+    msg.header.prefix_len = prefix_len;
+    msg.header.index = index;
+    msg.attributes.push(AddressAttribute::Local(addr));
+    netlink_request(RouteNetlinkMessage::DelAddress(msg), 0)
+}
+
+/// `ip route add default via GW dev DEV` — `RTM_NEWROUTE`, IPv4 main
+/// table, matching what real `ip route add default` writes. `proto` is
+/// `dhcp` when a `dhcp_cmd.rs` lease installs this route (matching real
+/// `dhcpcd`/`NetworkManager`'s own convention — `ip route` shows exactly
+/// this in its own `proto` column) and `static` for the CLI path (a
+/// human explicitly running `ip route add` — matching real `ip`'s own
+/// default when `proto` isn't given on the command line).
+pub(crate) fn add_default_route(
+    gateway: std::net::Ipv4Addr,
+    index: u32,
+    proto: netlink_packet_route::route::RouteProtocol,
+) -> Result<(), String> {
+    use netlink_packet_core::NLM_F_CREATE;
+    use netlink_packet_route::route::{RouteFlags, RouteType};
+    let mut msg = RouteMessage::default();
+    msg.header.address_family = AddressFamily::Inet;
+    msg.header.destination_prefix_length = 0;
+    msg.header.table = RouteHeader::RT_TABLE_MAIN;
+    msg.header.protocol = proto;
+    msg.header.scope = RouteScope::Universe;
+    msg.header.kind = RouteType::Unicast;
+    msg.header.flags = RouteFlags::empty();
+    msg.attributes
+        .push(RouteAttribute::Gateway(RouteAddress::Inet(gateway)));
+    msg.attributes.push(RouteAttribute::Oif(index));
+    netlink_request(RouteNetlinkMessage::NewRoute(msg), NLM_F_CREATE)
+}
+
+/// Parses `ADDR/PREFIXLEN` (real `ip`'s own CIDR argument shape for
+/// `addr add`/`addr del`) into its two parts.
+fn parse_cidr(s: &str) -> Result<(std::net::IpAddr, u8), String> {
+    let (addr, len) = s
+        .split_once('/')
+        .ok_or_else(|| format!("\"{s}\" is not in CIDR (ADDR/PREFIXLEN) form"))?;
+    let addr: std::net::IpAddr = addr
+        .parse()
+        .map_err(|e| format!("\"{addr}\" is not a valid address: {e}"))?;
+    let len: u8 = len
+        .parse()
+        .map_err(|e| format!("\"{len}\" is not a valid prefix length: {e}"))?;
+    Ok((addr, len))
+}
+
+pub(crate) fn get_links() -> Result<Vec<LinkMessage>, String> {
     let replies = netlink_dump(RouteNetlinkMessage::GetLink(LinkMessage::default()))?;
     Ok(replies
         .into_iter()
@@ -224,6 +390,16 @@ fn link_name(link: &LinkMessage) -> String {
         .unwrap_or_else(|| format!("if{}", link.header.index))
 }
 
+/// Raw hardware-address bytes — what `dhcp_cmd.rs` needs for a DHCP
+/// message's `chaddr` field, as opposed to `link_hw_address`'s own
+/// colon-hex display string below.
+pub(crate) fn link_hw_bytes(link: &LinkMessage) -> Option<Vec<u8>> {
+    link.attributes.iter().find_map(|a| match a {
+        LinkAttribute::Address(bytes) if !bytes.is_empty() => Some(bytes.clone()),
+        _ => None,
+    })
+}
+
 fn link_hw_address(link: &LinkMessage) -> Option<String> {
     link.attributes.iter().find_map(|a| match a {
         LinkAttribute::Address(bytes) if !bytes.is_empty() => Some(
@@ -297,6 +473,75 @@ fn print_addr_lines(index: u32, addrs: &[AddressMessage]) {
     }
 }
 
+/// Finds the value following a keyword token (`dev`, `via`) anywhere in
+/// `argv` — real `ip`'s own argument order is fairly permissive about
+/// where these go, and this project's own callers (the CLI here,
+/// `dhcp_cmd.rs`) only ever need the common orderings, not the full
+/// grammar.
+fn arg_after<'a>(argv: &'a [String], keyword: &str) -> Option<&'a str> {
+    argv.iter()
+        .position(|a| a == keyword)
+        .and_then(|i| argv.get(i + 1))
+        .map(String::as_str)
+}
+
+fn run_write(
+    show_addrs: bool,
+    show_links_only: bool,
+    show_routes: bool,
+    verb: &str,
+    argv: &[String],
+) -> Result<(), String> {
+    if show_links_only && verb == "set" {
+        // `ip link set [dev] DEV up|down` — the device name is
+        // whatever positional argument isn't "set"/"dev"/"up"/"down".
+        let dev = argv
+            .iter()
+            .skip(3)
+            .find(|a| !matches!(a.as_str(), "dev" | "up" | "down"))
+            .ok_or("usage: ip link set [dev] DEV up|down")?;
+        let up = argv.iter().any(|a| a == "up");
+        let down = argv.iter().any(|a| a == "down");
+        if up == down {
+            return Err("usage: ip link set [dev] DEV up|down".to_string());
+        }
+        let index = find_link_index(dev)?;
+        return set_link_up(index, up);
+    }
+
+    if show_addrs && (verb == "add" || verb == "del") {
+        let cidr = argv.get(3).ok_or("usage: ip addr add|del CIDR dev DEV")?;
+        let dev = arg_after(argv, "dev").ok_or("usage: ip addr add|del CIDR dev DEV")?;
+        let (addr, prefix_len) = parse_cidr(cidr)?;
+        let index = find_link_index(dev)?;
+        return if verb == "add" {
+            add_address(index, addr, prefix_len)
+        } else {
+            del_address(index, addr, prefix_len)
+        };
+    }
+
+    if show_routes && verb == "add" {
+        let is_default = argv.get(3).map(String::as_str) == Some("default");
+        if !is_default {
+            return Err("only 'ip route add default via GW dev DEV' is implemented".to_string());
+        }
+        let gw: std::net::Ipv4Addr = arg_after(argv, "via")
+            .ok_or("usage: ip route add default via GW dev DEV")?
+            .parse()
+            .map_err(|e| format!("invalid gateway address: {e}"))?;
+        let dev = arg_after(argv, "dev").ok_or("usage: ip route add default via GW dev DEV")?;
+        let index = find_link_index(dev)?;
+        return add_default_route(
+            gw,
+            index,
+            netlink_packet_route::route::RouteProtocol::Static,
+        );
+    }
+
+    Err(format!("unsupported operation '{verb}' for this object"))
+}
+
 pub fn run(args: IntoIter<OsString>) -> i32 {
     let argv: Vec<String> = args.map(|s| s.to_string_lossy().into_owned()).collect();
     let Some(subcommand) = argv.get(1).map(String::as_str) else {
@@ -314,6 +559,17 @@ pub fn run(args: IntoIter<OsString>) -> i32 {
             "ip: unsupported object '{subcommand}' (only 'addr'/'link'/'route' listing implemented)"
         );
         return 1;
+    }
+
+    let verb = argv.get(2).map(String::as_str).unwrap_or("show");
+    if verb != "show" {
+        return match run_write(show_addrs, show_links_only, show_routes, verb, &argv) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("ip: {e}");
+                1
+            }
+        };
     }
 
     if show_routes {

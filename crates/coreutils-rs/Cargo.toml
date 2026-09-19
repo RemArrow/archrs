@@ -36,7 +36,7 @@ magic = "0.16"
 ping = "0.9"
 diffutils = "0.5"
 same-file = "1"
-nix = { version = "0.31", features = ["mount", "signal"] }
+nix = { version = "0.31", features = ["mount", "signal", "socket"] }
 netlink-sys = "0.9"
 netlink-packet-core = "0.9"
 netlink-packet-route = "0.33"
@@ -161,3 +161,4 @@ uu_chfn = "0.2"
 uu_chsh = "0.2"
 uu_newgrp = "0.2"
 kmod = "0.5"
+dhcproto = "0.15"

@@ -1796,6 +1796,82 @@ to be usable."
       "verify the real thing appeared, don't assume timing" discipline
       the rest of this project already follows.
 
+### Phase 10 — real networking (complete)
+Picks up Phase 5's other still-open item, netlink write operations,
+and finishes it with an actual point: without this, nothing in the
+image could reach a network at all beyond a manually-assigned static
+address — a real gap for "usable," the same theme Phase 9 opened.
+
+- [x] **`ip link set`/`ip addr add`\|`del`/`ip route add default`**
+      (extends `ip_cmd.rs`) — the write-side counterpart to Phase 6's
+      read-only `rtnetlink` dump machinery, via the same
+      `netlink-packet-route` crate: `RTM_SETLINK` (link up/down),
+      `RTM_NEWADDR`/`RTM_DELADDR`, `RTM_NEWROUTE` for a default route.
+      Exposed as both real CLI subcommands and `pub(crate)` functions
+      (`set_link_up`/`add_address`/`del_address`/`add_default_route`)
+      so `dhcp_cmd.rs` below calls straight into the same real code
+      instead of shelling back out to this binary's own `ip` a second
+      time. Not implemented: `ip -6 route`, non-default route
+      destinations, `ip route del`, `ip addr add`'s optional flags.
+
+- [x] **`dhcpc`** (`dhcp_cmd.rs`) — a real, one-shot DHCPv4 client:
+      vendors `dhcproto` (BlueCat Engineering's DHCPv4/v6 parser/
+      encoder, also the foundation of their own `dora` DHCP server)
+      for the wire format, hand-rolls the actual
+      DISCOVER/OFFER/REQUEST/ACK state machine and the
+      project-specific part (configuring the interface via the `ip`
+      write functions above, and writing `/etc/resolv.conf`) — the
+      same "vendor the fiddly/protocol part, hand-roll the
+      orchestration" split as `crypt(3)`/`libkmod` elsewhere. No
+      lease renewal (T1/T2 timers) — a real, deliberately deferred gap
+      for anything running past one lease period, not a half
+      implementation.
+
+- [x] **`scripts/network-test.sh`** — boots the same real image with an
+      actual NIC attached (QEMU usermode/"slirp" networking, needing
+      no host root or bridge/tap setup, matching every other test
+      script here) and verifies the whole chain for real: `dhcpc`
+      genuinely negotiates a lease, `ip addr`/`ip route` show the real
+      configured address and default route, `/etc/resolv.conf` has
+      the real offered DNS server, and — the actual point of all of
+      this — the VM genuinely reaches the open internet through
+      slirp's NAT: real `ping` to the gateway *and* to `1.1.1.1`, and
+      a real `curl` fetch of `http://example.com` (DNS resolution
+      included), not just reachability to the gateway.
+      Found and fixed two real gaps to get here, neither of them
+      hypothetical:
+      - The NIC didn't show up in the guest *at all* at first (`ip
+        addr` listed only `lo`) — `virtio_net` (plus its own real
+        dependency chain, `failover` → `net_failover`) is a loadable
+        kernel module on this dev machine, not built in, and this
+        project's images have never shipped kernel modules matching
+        the booted kernel (a real, previously-open gap noted back in
+        the kernel-module-loading work). Since every boot test here
+        already boots the *host's own* kernel image, the host's own
+        already-installed `/lib/modules/$(uname -r)/` is an exact
+        version match by construction — `network-test.sh` copies just
+        the three real `.ko.zst` files actually needed (not the whole
+        ~170MB tree) and loads them in real dependency order with
+        this project's own `insmod`. This doubles as the first genuine
+        insert-cycle verification of `kmod_cmd.rs`, closing the gap
+        that phase's own ROADMAP entry explicitly named as
+        unreachable on this dev machine at the time.
+      - `ping` failed even after the NIC/DHCP/routing all worked —
+        `curl` (TCP) succeeded over the same path at the same time,
+        narrowing it immediately to `ping_cmd.rs` itself rather than
+        the network stack. Its own module doc comment already
+        documents using an unprivileged ICMP `DGRAM` socket gated by
+        `net.ipv4.ping_group_range`; checked the real value inside the
+        guest and found it genuinely `1 0` (an inverted, empty range
+        that permits no group) — a bare kernel's real default with
+        nothing setting it, since real distros normally get this from
+        a `systemd`/`procps-ng`-shipped `sysctl.d` default file this
+        minimal image doesn't install. Fixed in the test's own setup
+        step (writes `net.ipv4.ping_group_range` directly, the same
+        value Arch's own default file sets) rather than in
+        `ping_cmd.rs` — this is the image missing a real config file a
+        full install would have, not a code bug.
+
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,
 most already upstream projects in their own languages) is not a software

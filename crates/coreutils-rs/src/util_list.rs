@@ -240,4 +240,6 @@ const UTILS: &[(&str, &str)] = &[
     ("poweroff", "archrs-native"),
     ("halt", "archrs-native"),
     ("shutdown", "archrs-native"),
+    // Real DHCPv4 client — see dhcp_cmd.rs.
+    ("dhcpc", "archrs-native"),
 ];

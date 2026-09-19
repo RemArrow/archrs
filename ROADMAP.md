@@ -1008,20 +1008,42 @@ started with the more self-contained half of that gap:
       interfaces up, so genuinely nothing is configured yet) and zero
       addresses — a real, correctly-reported "nothing configured"
       state, not a bug.
-      Not implemented: any write operation (`ip link set`, `ip addr
-      add`, `ip route` at all — this phase is visibility only,
-      matching `ss`), `ip neigh`/`ip rule`, JSON output, filtering by
-      device name.
+      Not implemented (at the time `ip addr`/`ip link` were added):
+      any write operation, `ip route`, `ip neigh`/`ip rule`, JSON
+      output, filtering by device name.
+- [x] `ip route` — extends the same `ip_cmd.rs`/`netlink_dump`
+      machinery above with an `RTM_GETROUTE` dump (`RouteMessage`,
+      `RouteAttribute` from the same already-vendored
+      `netlink-packet-route`), no new crate needed. Lists the IPv4
+      main routing table — matching real `ip route`'s own default
+      family (IPv4-only unless `-6` is given) and its own default
+      table filtering (the kernel dump returns every table — main,
+      `local`, any custom one — unless filtered; real `ip route` with
+      no arguments only shows `main`, so this filters
+      `route.header.table == RT_TABLE_MAIN` to match, rather than
+      passing the raw dump straight through, which was a real,
+      caught-by-diffing-against-the-real-tool discrepancy: the first
+      version showed several extra `local`-table entries — `lo`'s and
+      each interface's own host/broadcast routes — real `ip route`
+      doesn't show by default).
+      Verified byte-for-byte (aside from real `ip`'s own trailing
+      space) against real `ip route` on this dev machine: same
+      default route (gateway, device, protocol, source, metric) and
+      same on-link subnet route (device, `scope link`, source,
+      metric).
+      Not implemented: `ip -6 route`, any write operation, other
+      route tables, `ip neigh`/`ip rule`, JSON output.
 
-This closes out the concrete work opened for Phase 6: both halves of
-"networking beyond `curl`/`ping`" (socket state via `ss`, interface/
-address state via `ip`) are done, verified, and — for the two pieces
-needing a genuinely different environment to prove (`dmesg`, `mount`,
-and now `ip` in a real, unconfigured network namespace) — exercised by
-the real boot test rather than just the dev host. `ip route`/`ip
-neigh`/any write operation remain open if a real need for them shows
-up, on the same "not needed yet, not impossible" footing as Phase 5's
-own closing boundary.
+This closes out the concrete work opened for Phase 6: all three of
+"networking beyond `curl`/`ping`" — socket state via `ss`, interface/
+address state via `ip addr`/`ip link`, and routing-table state via
+`ip route` — are done, verified, and — for the two pieces needing a
+genuinely different environment to prove (`dmesg`, `mount`, and `ip
+addr` in a real, unconfigured network namespace) — exercised by the
+real boot test rather than just the dev host. `ip neigh`/`ip rule`/any
+write operation remain open if a real need for them shows up, on the
+same "not needed yet, not impossible" footing as Phase 5's own closing
+boundary.
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

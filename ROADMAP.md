@@ -64,6 +64,14 @@ Confirmed, for real, everything the sandbox couldn't show:
   `reboot(2)` syscall itself succeeded* — the kernel's own log confirms it
   (`reboot: Power down`) — closing the other EPERM gap from the `unshare`
   test, where reboot(2) never actually completed.
+- Re-run after adding `diff`/`cmp`/`dmesg` (Phase 5): `diff` correctly
+  diffed two real files written by the init-spawned script, and `dmesg`
+  — which needs real `CAP_SYSLOG`/`CAP_SYS_ADMIN` to open `/dev/kmsg`
+  at all, gated by `kernel.dmesg_restrict` independently of the file's
+  own permission bits — read and correctly formatted genuine kernel
+  ring-buffer messages (`[    0.000000] Linux version ...`) from this
+  real boot. Another real capability the `unshare` sandbox has no way
+  to grant or verify at all.
 
 This is real evidence archrs can be a system's actual boot init and
 userland, not just a set of individually-correct binaries — but it's one
@@ -778,6 +786,33 @@ rather than an exhaustive, fixed checklist the way Phases 1-4 were.
       `parse_params` has no notion of directories, only two file
       paths) and `diff3`/`sdiff` (present in real diffutils but not
       vendored here; not common PKGBUILD/day-to-day needs).
+- [x] `dmesg` (util-linux) — no crate to vendor here, and none needed:
+      the real "engine" is the kernel's own structured `/dev/kmsg`
+      record interface (documented in
+      `Documentation/ABI/testing/dev-kmsg`), simple enough to read
+      directly (each `read()` returns exactly one
+      `<facility*8+level>,seq,timestamp_usec,flags;message` record) —
+      same reasoning as `column` needing no vendor target. Opened
+      non-blocking so reads stop at the currently buffered messages
+      (`EAGAIN`) instead of following forever, matching real `dmesg`'s
+      non-`--follow` default.
+      Reading `/dev/kmsg` needs real `CAP_SYSLOG`/`CAP_SYS_ADMIN`,
+      gated by the `kernel.dmesg_restrict` sysctl independently of the
+      device's own file permissions — confirmed real `dmesg` fails
+      identically unprivileged on this dev machine (`dmesg_restrict=1`
+      here), with the exact same wording this wraps (`dmesg: read
+      kernel buffer failed: Operation not permitted` — matched
+      precisely by using `libc::strerror` instead of `io::Error`'s own
+      `Display`, which appends a Rust-specific `(os error N)` suffix
+      real `dmesg` doesn't have).
+      Verified for real as root, the only way to verify this at all:
+      the real boot test (see above) now reads and correctly formats
+      genuine kernel ring-buffer messages from an actual boot
+      (`[    0.000000] Linux version ...`, monotonic timestamps
+      matching real dmesg's default format exactly).
+      Not implemented: `-T`/`--ctime` (wall-clock timestamps), `-l`/
+      `-f` (level/facility filtering), `-c` (clear-after-read),
+      `--follow`, colorized/JSON output.
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

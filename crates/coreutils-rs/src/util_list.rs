@@ -166,4 +166,8 @@ const UTILS: &[(&str, &str)] = &[
     // as a library — see diff_cmd.rs.
     ("diff", "archrs-native"),
     ("cmp", "archrs-native"),
+    // `dmesg` (util-linux) — reads the kernel's own structured
+    // `/dev/kmsg` record interface directly; no parser worth vendoring
+    // — see dmesg_cmd.rs.
+    ("dmesg", "archrs-native"),
 ];

@@ -22,12 +22,17 @@ pub struct Package {
     pub groups: Vec<String>,
     /// Config file paths (relative to the install root, e.g.
     /// `etc/foo.conf`) pacman should preserve/back up on removal or
-    /// upgrade if the installed copy was locally modified. `.PKGINFO`
-    /// stores just the path (`backup = etc/foo.conf`); the local db's
-    /// `desc` file additionally stores a hash of the *pristine*
-    /// (just-installed) file per path (`etc/foo.conf<TAB><md5>`) to
-    /// later detect local edits — not modeled here, since nothing in
-    /// this project reads it back yet (no `pacman -Qkk`-equivalent).
+    /// upgrade if the installed copy was locally modified.
+    ///
+    /// Format depends on where a `Package` came from, matching each
+    /// source's own real format: `.PKGINFO`/a freshly-built package
+    /// stores just the path (`backup = etc/foo.conf` → this holds
+    /// `"etc/foo.conf"`); the local db's `desc` file additionally
+    /// stores a hash of the *pristine* (just-installed) file per path
+    /// (`etc/foo.conf<TAB><md5>` → this holds the full
+    /// `"etc/foo.conf\t<md5>"`, tab included) — used by `pacman-rs`'s
+    /// own `-Qii` to report whether an installed config file has been
+    /// locally modified, the same way real pacman's `-Qii` does.
     pub backup: Vec<String>,
     pub build_date: Option<i64>,
     pub install_date: Option<i64>,
@@ -81,12 +86,9 @@ pub fn parse_desc(text: &str) -> Package {
             "GROUPS" => pkg.groups = values,
             // Local db's own format: `path<TAB>hash` per line; only
             // the path is kept, matching this struct's own doc note.
-            "BACKUP" => {
-                pkg.backup = values
-                    .into_iter()
-                    .map(|v| v.split('\t').next().unwrap_or(&v).to_string())
-                    .collect()
-            }
+            // Kept as the full `path<TAB>hash` line, not just the
+            // path — see the field's own doc comment for why.
+            "BACKUP" => pkg.backup = values,
             "BUILDDATE" => pkg.build_date = joined.parse().ok(),
             "INSTALLDATE" => pkg.install_date = joined.parse().ok(),
             "REASON" => pkg.reason = Some(joined),
@@ -223,6 +225,38 @@ pub fn write_pkginfo(pkg: &Package, packager: &str, build_date: i64, size: u64) 
         out.push_str(&format!("backup = {path}\n"));
     }
     out
+}
+
+/// Whether an installed backup (config) file has been locally edited
+/// since install, matching real pacman's own `-Qii` check: compare
+/// the live file's MD5 against the pristine hash recorded at install
+/// time (see `Package::backup`'s own doc comment for the format).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackupStatus {
+    Unmodified,
+    Modified,
+    /// The file existed at install time (it's in `%BACKUP%`) but is
+    /// gone now — real pacman reports this case too, distinctly from
+    /// "modified".
+    Missing,
+}
+
+/// Splits one of `Package::backup`'s local-db-format entries
+/// (`path<TAB>md5`) and checks it against the real file under `root`.
+/// Returns `None` for a `.PKGINFO`-format entry (bare path, no
+/// recorded hash to compare against) rather than guessing.
+pub fn backup_status(root: &Path, entry: &str) -> Option<(String, BackupStatus)> {
+    let (path, expected_hash) = entry.split_once('\t')?;
+    let full = root.join(path);
+    let status = if !full.exists() {
+        BackupStatus::Missing
+    } else {
+        match crate::verify::digest_hex_for(&full, crate::verify::ChecksumKind::Md5) {
+            Ok(hash) if hash.eq_ignore_ascii_case(expected_hash) => BackupStatus::Unmodified,
+            _ => BackupStatus::Modified,
+        }
+    };
+    Some((path.to_string(), status))
 }
 
 #[cfg(test)]

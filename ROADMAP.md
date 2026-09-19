@@ -843,16 +843,42 @@ downgrade.conf)`).
       file *after* extraction (the "pristine" copy pacman later
       compares against to detect local edits) and writes a real
       `%BACKUP%\npath<TAB>hash` block into the local db's `desc` file
-      — the same format and hash algorithm real pacman uses. Not
-      wired up: an actual `pacman -Qkk`-style consumer that reads
-      this back to report local modifications — the data model is
-      complete and correct, but nothing yet acts on it, since no
-      command in this project currently needs to.
+      — the same format and hash algorithm real pacman uses.
       Verified for real against `downgrade`: `.PKGINFO` correctly
       shows `backup = etc/xdg/downgrade/downgrade.conf`; after
       installing, the local db's `desc` file has a real `%BACKUP%`
       entry whose hash is byte-for-byte identical to a direct
       `md5sum` of the actually-installed config file.
+- [x] `pacman-rs -Qii`/`-Sii` — the real consumer for the `%BACKUP%`
+      data above, closing the gap the previous entry left open.
+      Real pacman distinguishes `-Qi` (basic info) from `-Qii` (same,
+      plus a `Backup Files` section listing each config file's
+      modification status) by counting `i`s in the flag string —
+      `pacman-rs`'s arg parser now does the same (`info_level: u8`
+      instead of a bool). Added `alpm_rs::package::backup_status`,
+      which splits a local-db-format `%BACKUP%` entry
+      (`path<TAB>md5`) and compares the recorded hash against the
+      real file's current MD5, reporting `Unmodified`/`Modified`/
+      `Missing` (a file that existed at install time but is gone now
+      — real pacman distinguishes this from "modified" too).
+      This needed `Package::backup`'s own format to change: it used
+      to strip the hash when parsing a local-db `desc` file (kept
+      only the path, discarding exactly the data this needed) — now
+      keeps the full `path<TAB>hash` line for local-db-sourced
+      `Package`s, while `.PKGINFO`-sourced ones stay bare paths (no
+      hash exists at build time to store) — the field's own doc
+      comment now covers both cases so the split isn't a surprise
+      later.
+      Verified for real against `downgrade`, checking all three
+      states, not just the happy path: `-Qii` right after install
+      correctly showed `[unmodified]`; appending a real line to the
+      installed config file and re-running `-Qii` correctly flipped
+      it to `[modified]`; deleting the file correctly showed
+      `[missing]`. Also confirmed `-Qi` (one `i`) still omits the
+      section entirely, matching real pacman's own distinction.
+      Matches real `pacman -Qii`'s exact label width and multi-line
+      continuation format (checked directly against this dev
+      machine's own `pacman -Qii pacman` output).
 - [x] `which` and `patch` — the remaining small, well-scoped
       base-devel-adjacent utilities PKGBUILDs commonly need. `which`
       vendors the `which` crate (real cross-platform `PATH` lookup);

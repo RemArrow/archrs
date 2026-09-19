@@ -28,7 +28,10 @@ enum Op {
 
 struct Args {
     op: Option<Op>,
-    info: bool,
+    /// Real pacman distinguishes `-Qi`/`-Si` (basic info) from
+    /// `-Qii` (same, plus a `Backup Files` section with each file's
+    /// modification status) by counting `i`s — this does the same.
+    info_level: u8,
     list: bool,
     search: bool,
     print: bool,
@@ -45,7 +48,7 @@ struct Args {
 fn parse_args() -> Result<Args> {
     let mut args = Args {
         op: None,
-        info: false,
+        info_level: 0,
         list: false,
         search: false,
         print: false,
@@ -65,7 +68,7 @@ fn parse_args() -> Result<Args> {
             set_op(&mut args, Op::Query)?;
             for c in flags.chars() {
                 match c {
-                    'i' => args.info = true,
+                    'i' => args.info_level += 1,
                     'l' => args.list = true,
                     's' => args.search = true,
                     other => anyhow::bail!("unknown query modifier: -{other}"),
@@ -75,7 +78,7 @@ fn parse_args() -> Result<Args> {
             set_op(&mut args, Op::Sync)?;
             for c in flags.chars() {
                 match c {
-                    'i' => args.info = true,
+                    'i' => args.info_level += 1,
                     'p' => args.print = true,
                     'y' => args.refresh = true,
                     'u' => args.upgrade = true,
@@ -338,8 +341,8 @@ fn run_query(args: &Args, config: &PacmanConfig) -> Result<()> {
     };
 
     for pkg in packages {
-        if args.info {
-            print_info(&pkg, None);
+        if args.info_level > 0 {
+            print_info(&pkg, None, args.info_level, &config.root_dir);
         } else {
             println!("{} {}", pkg.name, pkg.version);
         }
@@ -422,12 +425,21 @@ fn run_sync(args: &Args, config: &PacmanConfig) -> Result<()> {
     }
     let universe = Universe::from_syncdbs(&dbs);
 
-    if args.info {
+    if args.info_level > 0 {
         for name in &args.targets {
             let candidate = universe
                 .find_by_name(name)
                 .with_context(|| format!("package '{name}' was not found in any repo"))?;
-            print_info(&candidate.package, Some(&candidate.repo));
+            // A sync-db entry was never installed, so it has no
+            // recorded backup-file hashes to check — `print_info`'s
+            // backup section is simply a no-op here (`pkg.backup` is
+            // always empty for these), same as real pacman's `-Sii`.
+            print_info(
+                &candidate.package,
+                Some(&candidate.repo),
+                args.info_level,
+                &config.root_dir,
+            );
         }
         return Ok(());
     }
@@ -648,7 +660,7 @@ fn run_remove(args: &Args, config: &PacmanConfig) -> Result<()> {
     Ok(())
 }
 
-fn print_info(pkg: &alpm_rs::Package, repo: Option<&str>) {
+fn print_info(pkg: &alpm_rs::Package, repo: Option<&str>, info_level: u8, root: &Path) {
     println!("Repository      : {}", repo.unwrap_or("local"));
     println!("Name            : {}", pkg.name);
     println!("Version         : {}", pkg.version);
@@ -672,6 +684,33 @@ fn print_info(pkg: &alpm_rs::Package, repo: Option<&str>) {
     }
     if let Some(size) = pkg.size {
         println!("Installed Size  : {size} B");
+    }
+    // Real pacman's `-Qii`/`-Sii` (one more `i` than plain `-Qi`)
+    // additionally lists each backup (config) file with its
+    // modification status — the actual consumer for the MD5 hashes
+    // `extract_package` records at install time, matching real
+    // pacman's own label width/continuation-line format exactly
+    // (checked against this system's own `pacman -Qii`).
+    if info_level >= 2 && !pkg.backup.is_empty() {
+        let mut first = true;
+        for entry in &pkg.backup {
+            let Some((path, status)) = alpm_rs::package::backup_status(root, entry) else {
+                continue;
+            };
+            let label = if status == alpm_rs::package::BackupStatus::Unmodified {
+                "unmodified"
+            } else if status == alpm_rs::package::BackupStatus::Modified {
+                "modified"
+            } else {
+                "missing"
+            };
+            if first {
+                println!("Backup Files    : {path} [{label}]");
+                first = false;
+            } else {
+                println!("                  {path} [{label}]");
+            }
+        }
     }
     println!();
 }

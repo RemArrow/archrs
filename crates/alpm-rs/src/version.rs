@@ -110,7 +110,11 @@ fn rpmvercmp(a: &str, b: &str) -> Ordering {
         // `b` produced an empty segment here: either it ran out, or its
         // next run is the other type. Numeric beats alpha either way.
         if b_start == j {
-            return if is_num { Ordering::Greater } else { Ordering::Less };
+            return if is_num {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            };
         }
 
         let a_seg = &a[a_start..i];

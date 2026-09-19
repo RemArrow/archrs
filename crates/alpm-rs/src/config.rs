@@ -57,8 +57,7 @@ impl Default for PacmanConfig {
 impl PacmanConfig {
     pub fn parse_file(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let path = path.as_ref();
-        let text =
-            fs::read_to_string(path).map_err(|e| ConfigError::Io(path.to_path_buf(), e))?;
+        let text = fs::read_to_string(path).map_err(|e| ConfigError::Io(path.to_path_buf(), e))?;
         Ok(Self::parse_str(&text))
     }
 
@@ -170,7 +169,10 @@ SigLevel = Optional TrustAll
 Server = https://example.com/$repo/os/$arch
 "#;
         let cfg = PacmanConfig::parse_str(text);
-        assert_eq!(cfg.cache_dirs, vec![PathBuf::from("/var/cache/pacman/pkg/")]);
+        assert_eq!(
+            cfg.cache_dirs,
+            vec![PathBuf::from("/var/cache/pacman/pkg/")]
+        );
         assert_eq!(cfg.hold_pkg, vec!["pacman", "glibc"]);
         assert_eq!(cfg.repos.len(), 2);
         assert_eq!(cfg.repos[0].name, "core");

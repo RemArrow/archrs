@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::package::{parse_desc_file, Package};
+use crate::package::{Package, parse_desc_file};
 
 #[derive(Debug, Error)]
 pub enum DbError {

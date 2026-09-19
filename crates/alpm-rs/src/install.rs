@@ -61,13 +61,15 @@ pub fn extract_package(
     pkg: &Package,
     reason: &str,
 ) -> Result<Vec<String>, InstallError> {
-    let file =
-        File::open(archive_path).map_err(|e| InstallError::OpenArchive(archive_path.to_path_buf(), e))?;
+    let file = File::open(archive_path)
+        .map_err(|e| InstallError::OpenArchive(archive_path.to_path_buf(), e))?;
     let decoder = zstd::stream::read::Decoder::new(file)
         .map_err(|e| InstallError::OpenArchive(archive_path.to_path_buf(), e))?;
     let mut archive = Archive::new(decoder);
 
-    let pkg_dir = db_path.join("local").join(format!("{}-{}", pkg.name, pkg.version));
+    let pkg_dir = db_path
+        .join("local")
+        .join(format!("{}-{}", pkg.name, pkg.version));
     fs::create_dir_all(&pkg_dir).map_err(|e| InstallError::WriteDb(pkg_dir.clone(), e))?;
 
     let mut installed_paths = Vec::new();

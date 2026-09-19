@@ -6,7 +6,7 @@ use flate2::read::GzDecoder;
 use tar::Archive;
 use thiserror::Error;
 
-use crate::package::{parse_desc, Package};
+use crate::package::{Package, parse_desc};
 
 #[derive(Debug, Error)]
 pub enum SyncDbError {
@@ -112,7 +112,8 @@ mod tests {
     }
 
     fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("archrs-syncdb-test-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("archrs-syncdb-test-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

@@ -5,7 +5,7 @@ use std::path::Path;
 
 use thiserror::Error;
 
-use crate::depend::{parse_provide, Depend};
+use crate::depend::{Depend, parse_provide};
 use crate::package::Package;
 
 #[derive(Debug, Error)]
@@ -49,9 +49,10 @@ pub fn find_reverse_dependents(
 /// one of its `%PROVIDES%` entries.
 fn find_installed_providing<'a>(dep: &Depend, installed: &'a [Package]) -> Option<&'a Package> {
     if let Some(pkg) = installed.iter().find(|p| p.name == dep.name)
-        && dep.satisfied_by(&pkg.name, Some(&pkg.version)) {
-            return Some(pkg);
-        }
+        && dep.satisfied_by(&pkg.name, Some(&pkg.version))
+    {
+        return Some(pkg);
+    }
     installed.iter().find(|pkg| {
         pkg.provides.iter().any(|provide| {
             let (pname, pver) = parse_provide(provide);
@@ -140,7 +141,9 @@ pub fn remove_package(
         }
     }
 
-    let pkg_dir = db_path.join("local").join(format!("{}-{}", pkg.name, pkg.version));
+    let pkg_dir = db_path
+        .join("local")
+        .join(format!("{}-{}", pkg.name, pkg.version));
     fs::remove_dir_all(&pkg_dir).map_err(|e| RemoveError::RemoveDbEntry(pkg_dir, e))?;
 
     Ok(removed)

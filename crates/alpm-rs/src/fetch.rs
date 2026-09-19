@@ -45,7 +45,10 @@ pub fn resolve_servers(repo: &Repo) -> Result<Vec<String>, FetchError> {
             .map_err(|e| FetchError::ReadMirrorlist(include_path.clone(), e))?;
         for line in text.lines() {
             let line = line.split('#').next().unwrap_or("").trim();
-            if let Some(server) = line.strip_prefix("Server").and_then(|s| s.trim_start().strip_prefix('=')) {
+            if let Some(server) = line
+                .strip_prefix("Server")
+                .and_then(|s| s.trim_start().strip_prefix('='))
+            {
                 servers.push(server.trim().to_string());
             }
         }
@@ -65,7 +68,13 @@ pub fn package_url(server_template: &str, repo_name: &str, arch: &str, filename:
 
 /// Download `url` to `dest`, trying each server in turn until one
 /// succeeds. Returns the URL that worked.
-pub fn download(servers: &[String], repo_name: &str, arch: &str, filename: &str, dest: &Path) -> Result<String, FetchError> {
+pub fn download(
+    servers: &[String],
+    repo_name: &str,
+    arch: &str,
+    filename: &str,
+    dest: &Path,
+) -> Result<String, FetchError> {
     if servers.is_empty() {
         return Err(FetchError::NoServers(repo_name.to_string()));
     }

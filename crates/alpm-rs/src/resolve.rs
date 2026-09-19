@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::depend::{parse_provide, Depend};
+use crate::depend::{Depend, parse_provide};
 use crate::package::Package;
 use crate::syncdb::SyncDb;
 
@@ -35,7 +35,10 @@ impl Universe {
         let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
         let mut by_provide: HashMap<String, Vec<usize>> = HashMap::new();
         for (idx, cand) in candidates.iter().enumerate() {
-            by_name.entry(cand.package.name.clone()).or_default().push(idx);
+            by_name
+                .entry(cand.package.name.clone())
+                .or_default()
+                .push(idx);
             for provide in &cand.package.provides {
                 let (name, _ver) = parse_provide(provide);
                 by_provide.entry(name).or_default().push(idx);
@@ -102,14 +105,18 @@ impl<'a> Installed<'a> {
                 by_provide.entry(name).or_default().push(pkg);
             }
         }
-        Installed { by_name, by_provide }
+        Installed {
+            by_name,
+            by_provide,
+        }
     }
 
     fn satisfies(&self, dep: &Depend) -> bool {
         if let Some(pkg) = self.by_name.get(dep.name.as_str())
-            && dep.satisfied_by(&pkg.name, Some(&pkg.version)) {
-                return true;
-            }
+            && dep.satisfied_by(&pkg.name, Some(&pkg.version))
+        {
+            return true;
+        }
         if let Some(pkgs) = self.by_provide.get(&dep.name) {
             for pkg in pkgs {
                 for provide in &pkg.provides {
@@ -138,11 +145,7 @@ pub struct Resolution {
 /// package name already present (with a satisfying version) in
 /// `already_installed` — pass an empty slice to resolve everything from
 /// scratch.
-pub fn resolve(
-    universe: &Universe,
-    targets: &[&str],
-    already_installed: &[Package],
-) -> Resolution {
+pub fn resolve(universe: &Universe, targets: &[&str], already_installed: &[Package]) -> Resolution {
     let installed = Installed::new(already_installed);
 
     // Explicit targets are always resolved and included, even if already

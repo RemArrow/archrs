@@ -14,6 +14,6 @@ pub use config::PacmanConfig;
 pub use db::LocalDb;
 pub use depend::Depend;
 pub use package::Package;
-pub use resolve::{resolve, Candidate, Resolution, Universe};
+pub use resolve::{Candidate, Resolution, Universe, resolve};
 pub use syncdb::SyncDb;
 pub use version::vercmp;

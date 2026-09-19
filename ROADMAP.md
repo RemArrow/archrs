@@ -788,6 +788,29 @@ different download per architecture), not something specific to PGP.
       OpenPGP for package signatures) rather than adding without
       deliberate thought. Left open, now with a much more precise
       description of exactly what's missing than before this attempt.
+
+**`noextract=` (2026-09-19).** Found by searching for the field
+directly (`grep noextract=`) rather than starting from a known
+project: `brave-bin` (a real ~200MB browser release, `.zip`, `epoch=1`
+again) — its own `prepare()` extracts its `noextract`-marked `.zip`
+itself (`bsdtar -xf ... -C brave`), the standard reason a real
+PKGBUILD uses `noextract` at all (wanting control over the extraction
+destination/method rather than the generic default).
+- [x] `noextract=()` — sources named there (by their post-`::`-rename
+      destination filename, matching real makepkg's own matching rule)
+      are downloaded and checksum-verified as normal but never passed
+      to the generic auto-extractor, left as the plain downloaded file
+      for the PKGBUILD's own `prepare()`/`build()` to handle.
+      This was verified to be a real **hard failure**, not just wasted
+      work, by testing the counterfactual directly: reverting the fix
+      and rebuilding `brave-bin` again crashed outright — `extracting
+      zip archive: i/o error: Is a directory (os error 21)` — the
+      auto-extractor choking on how this specific real zip is laid
+      out, not a hypothetical inefficiency. With the fix, `brave-bin`
+      built successfully (484MB uncompressed pkgdir, correct
+      `epoch=1` version `1:1.95.104-1`), installed via `pacman-rs -U`,
+      and the installed browser binary ran for real (`brave
+      --version` → `Brave Browser 153.1.95.104`).
 - [x] `which` and `patch` — the remaining small, well-scoped
       base-devel-adjacent utilities PKGBUILDs commonly need. `which`
       vendors the `which` crate (real cross-platform `PATH` lookup);

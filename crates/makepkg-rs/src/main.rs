@@ -29,7 +29,14 @@
 //!    real makepkg — but a remote source with *no* recognized
 //!    checksum at all is a hard error, not a silent pass-through, see
 //!    `prepare_sources`), then extracts recognized archive formats
-//!    (`.tar`/`.tar.gz`/`.tar.zst`/`.zip`) into `src/`.
+//!    (`.tar`/`.tar.gz`/`.tar.zst`/`.zip`) into `src/` — unless it's
+//!    named in `noextract=()`, in which case it's left as the plain
+//!    downloaded file for the PKGBUILD's own `prepare()`/`build()` to
+//!    handle itself.
+//!    `source_$CARCH`/`*sums_$CARCH`/`depends_$CARCH` (architecture-
+//!    specific arrays real `-bin` packages commonly use) are
+//!    concatenated onto the plain array of the same name rather than
+//!    replacing it, matching real makepkg (`combined_arch_array`).
 //! 3. If the PKGBUILD defines `pkgver()`, run it (with `$srcdir` as its
 //!    working directory) and use its output as the real package
 //!    version — the mechanism every VCS-sourced PKGBUILD needs, since
@@ -106,8 +113,13 @@
 //!   specifically that nothing imports the `validpgpkeys` key first
 //!   (a real, separate trust-bootstrapping design decision, not a
 //!   quick addition — see ROADMAP.md).
+//! - `brave-bin`: a real `noextract=()` entry (its own `prepare()`
+//!   extracts the marked `.zip` itself) — confirmed, by reverting the
+//!   fix and rebuilding, that this was a real **hard failure** without
+//!   it (`extracting zip archive: i/o error: Is a directory`), not
+//!   just wasted work.
 //!
-//! All seven built (or, for `1password-cli`, correctly got as far as
+//! All eight built (or, for `1password-cli`, correctly got as far as
 //! a real `gpg` "no public key" error — matching what real makepkg
 //! itself would report without that key already trusted), installed
 //! via `pacman-rs -U`, and ran/resolved correctly afterward. `.install`
@@ -126,7 +138,7 @@
 //! via `alpm_rs::verify::gpg_verify` and the real `gpg` binary; what's
 //! actually missing is importing `validpgpkeys`' key from a keyserver
 //! first, a real trust-bootstrapping design decision deliberately not
-//! made yet, not an oversight — see ROADMAP.md), no `noextract`,
+//! made yet, not an oversight — see ROADMAP.md),
 //! `svn+`/`hg+`/`bzr+` VCS sources (real but rarer than git), `cksums`
 //! (a non-cryptographic CRC — every other real checksum variant is
 //! supported, see above), and the `declare -p` output parser handles
@@ -165,6 +177,7 @@ const VARS: &[&str] = &[
     "sha1sums",
     "md5sums",
     "install",
+    "noextract",
 ];
 
 #[derive(Debug, Default)]
@@ -619,6 +632,19 @@ fn prepare_sources(startdir: &Path, srcdir: &Path, pkgbuild: &PkgBuild) -> Resul
             println!("makepkg-rs: {filename} {var} OK");
         }
 
+        // `noextract=()` names, by their post-`::`-rename destination
+        // filename, sources real makepkg leaves as a whole downloaded
+        // file rather than auto-extracting — real PKGBUILDs use this
+        // when they extract it themselves in `prepare()`/`build()`
+        // (their own choice of destination, format-specific flags,
+        // etc.) rather than wanting the generic default. Extracting it
+        // here anyway on top of that would be pure wasted work at
+        // best — a real, previously undiscovered gap, caught by
+        // testing against `brave-bin`, which extracts its own
+        // `noextract`-marked `.zip` itself in `prepare()`.
+        if pkgbuild.array("noextract").iter().any(|n| n == &filename) {
+            continue;
+        }
         if extract_archive(&dest, srcdir)? {
             println!("makepkg-rs: extracted {filename}");
         }

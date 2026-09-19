@@ -47,18 +47,6 @@ fi
 
 . "$WORKSPACE_ROOT/scripts/lib-build-rootfs.sh"
 
-# archrs-init's own command parser is a plain whitespace split with no
-# shell-style quoting (see its own module doc comment — no IPC/parsing
-# richness has been needed before now), so a `wait sh -c "a; b"` config
-# line doesn't do what it looks like it does: the quotes are just
-# characters to it, and "useradd/-m/-s/testuser/..." all land as
-# separate argv entries to `sh -c`, which then only sees `-c` at its
-# first non-flag argument. Confirmed for real (a genuine bug, not a
-# guess): `useradd -m -s /bin/sh testuser 2>/dev/null; ...` inline in the
-# config produced `error: unexpected argument '-m' found` from brush.
-# Sidestepped the same way scripts/boot-test.sh's own fixed script
-# already does: a real script *file*, invoked with two plain
-# space-separated tokens (interpreter, path) that need no quoting at all.
 cat > "$ROOTFS/root/setup-testuser.sh" <<'SETUP'
 #!/bin/sh
 useradd -m -s /bin/sh testuser 2>/dev/null
@@ -66,12 +54,47 @@ echo testuser:secret123 | chpasswd
 SETUP
 chmod +x "$ROOTFS/root/setup-testuser.sh"
 
+# Real systemd is this project's real init as of Phase 13 (replaced its
+# own former archrs-init — see ROADMAP.md), so "run this once before the
+# login prompt appears" is now a real systemd unit with a real ordering
+# dependency, not a line in archrs-init.conf's own respawn/wait list.
+# `Before=` on both the getty target and the specific unit (not just
+# `Before=getty.target`) because `serial-getty@ttyS0.service` is only
+# pulled in by `getty.target` as an already-enabled instance, not
+# spawned fresh by it — an ordering edge against the target alone
+# doesn't guarantee this runs first, found by reading systemd's own
+# `getty.target`/`getty@.service` unit files on this dev machine rather
+# than guessing.
+mkdir -p "$ROOTFS/etc/systemd/system"
+cat > "$ROOTFS/etc/systemd/system/archrs-setup-testuser.service" <<'UNIT'
+[Unit]
+Description=archrs login-test setup
+Before=getty.target serial-getty@ttyS0.service
+
+[Service]
+Type=oneshot
+ExecStart=/root/setup-testuser.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl --root="$ROOTFS" enable archrs-setup-testuser.service
 # `-L` (ignore modem control lines): QEMU's virtual serial port never
 # raises DCD, and agetty otherwise waits for it before showing a prompt.
-cat > "$ROOTFS/etc/archrs-init.conf" <<'CONF'
-wait /bin/sh /root/setup-testuser.sh
-respawn /usr/bin/agetty -L ttyS0 115200 linux
-CONF
+# Real `serial-getty@.service` doesn't pass `-L` by default, so a
+# drop-in overrides its `ExecStart` rather than using the plain
+# `systemctl enable serial-getty@ttyS0.service` this project's own
+# `archrs-install` uses for real hardware (which has real modem control
+# lines, or none needed for a local `tty1` — this is specifically a
+# QEMU-serial-console workaround, not something a real install needs).
+mkdir -p "$ROOTFS/etc/systemd/system/serial-getty@ttyS0.service.d"
+cat > "$ROOTFS/etc/systemd/system/serial-getty@ttyS0.service.d/override.conf" <<'UNIT'
+[Service]
+ExecStart=
+ExecStart=-/usr/bin/agetty -L %I 115200 linux
+UNIT
+systemctl --root="$ROOTFS" enable serial-getty@ttyS0.service
 
 echo "login-test: building disk image..."
 rm -f "$IMAGE" "$SOCK"
@@ -87,7 +110,7 @@ echo "login-test: booting..."
 qemu-system-x86_64 \
     -kernel "$KERNEL" \
     -drive file="$IMAGE",format=raw,if=virtio \
-    -append "root=/dev/vda rw console=ttyS0 init=/sbin/init.archrs panic=1" \
+    -append "root=/dev/vda rw console=ttyS0 panic=1 init=/usr/lib/systemd/systemd" \
     -m 1G \
     -serial "unix:$SOCK,server=on,wait=off" \
     -display none \

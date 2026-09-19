@@ -1,13 +1,15 @@
 [package]
-name = "archrs-init"
+name = "archrs-install"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "archrs-init"
+name = "archrs-install"
 path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-nix = { version = "0.31", features = ["mount", "process", "signal", "reboot"] }
+clap.workspace = true
+uuid = "1"
+libc = "0.2"

@@ -1,61 +1,63 @@
-//! `reboot`/`poweroff`/`halt`/`shutdown` — the user-facing side of
-//! `archrs-init`'s own shutdown mechanism. `archrs-init` (Phase 3) only
-//! ever grew signal-based shutdown (SIGTERM/SIGINT to exit, SIGUSR1 to
-//! reboot, SIGUSR2 to power off — see its own module doc comment for why:
-//! "no IPC mechanism for anything richer yet"), verified so far only by
-//! sending those signals directly from outside the VM (`kill -USR2 1` in
-//! `scripts/boot-test.sh`). That's not something an actual logged-in user
-//! can do — these commands are the missing other half: real, minimal
-//! wrappers that just send the same real signals to PID 1, matching
-//! `archrs-init`'s own real (not simulated) mechanism exactly rather than
-//! inventing a second one.
+//! `reboot`/`poweroff`/`halt`/`shutdown` — thin wrappers around real
+//! `systemctl reboot`/`poweroff`/`halt`, this project's real init as of
+//! Phase 13 (systemd replaced the project's own `archrs-init`; see
+//! ROADMAP.md's Phase 13 section for why — the initramfs this project
+//! already relies on for a real bootable install assumes systemd for
+//! early boot regardless, and using it for the full system too matches
+//! how real Arch/Manjaro actually boot, consistent with this project's
+//! established pattern of using real supporting infrastructure — real
+//! kernel, real GRUB, real PAM — rather than reinventing it).
 //!
-//! Real `reboot`/`poweroff`/`halt` on other distros go through
-//! `systemd`/D-Bus or a SysV `/dev/initctl` FIFO — neither exists here,
-//! since `archrs-init` deliberately isn't a systemd replacement. This is
-//! the right level of implementation for *this* init, not a stand-in for
-//! a mechanism this project isn't building.
+//! `systemctl` itself does the real privilege enforcement here (via
+//! polkit when running under a session, or trivially for root) — no
+//! separate check needed in this wrapper, the same "let the real
+//! mechanism's own permission model do the work" principle this
+//! project already applied to `su`/`sudo` (`kill(2)`'s own permission
+//! check) before systemd replaced signal-to-PID-1 as the real
+//! mechanism.
 //!
-//! `kill(1, ...)` itself enforces the real permission check (matching
-//! signal's own permission model: sender's real/effective uid must match
-//! PID 1's, i.e. be root, or the kernel returns EPERM) — no separate
-//! privilege check needed here.
-//!
-//! Not implemented: real delayed shutdown (`shutdown +5`, wall messages
-//! to other sessions), `-f`/`--force`, `--no-wall`. `shutdown`'s only
-//! recognized forms are `shutdown [-r|-h] now` and bare `shutdown`
-//! (power off), matching the two signals `archrs-init` actually handles.
+//! Not implemented: real delayed shutdown (`shutdown +5`, wall
+//! messages), `-f`/`--force`, `--no-wall`, `kexec`/`soft-reboot`/
+//! `suspend`/`hibernate` (all real `systemctl` verbs, just not wired
+//! up here). `shutdown`'s only recognized forms are `shutdown [-r|-h]
+//! now` and bare `shutdown` (power off).
 
 use std::ffi::OsString;
+use std::process::Command;
 use std::vec::IntoIter;
 
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
-
-fn signal_init(signal: Signal, action: &str) -> i32 {
-    match self::signal::kill(Pid::from_raw(1), signal) {
-        Ok(()) => 0,
+fn run_systemctl(verb: &str, action: &str) -> i32 {
+    match Command::new("systemctl").arg(verb).status() {
+        Ok(status) if status.success() => 0,
+        Ok(status) => {
+            eprintln!("{action}: systemctl {verb} exited with {status}");
+            status.code().unwrap_or(1)
+        }
         Err(e) => {
-            eprintln!("{action}: could not signal PID 1: {e}");
+            eprintln!("{action}: could not run systemctl: {e}");
             1
         }
     }
 }
 
 pub fn run_reboot(_args: IntoIter<OsString>) -> i32 {
-    signal_init(Signal::SIGUSR1, "reboot")
+    run_systemctl("reboot", "reboot")
 }
 
 pub fn run_poweroff(_args: IntoIter<OsString>) -> i32 {
-    signal_init(Signal::SIGUSR2, "poweroff")
+    run_systemctl("poweroff", "poweroff")
+}
+
+pub fn run_halt(_args: IntoIter<OsString>) -> i32 {
+    run_systemctl("halt", "halt")
 }
 
 pub fn run_shutdown(mut args: IntoIter<OsString>) -> i32 {
     args.next(); // argv[0]: our own utility name
     let reboot = args.any(|a| a == "-r");
     if reboot {
-        signal_init(Signal::SIGUSR1, "shutdown")
+        run_systemctl("reboot", "shutdown")
     } else {
-        signal_init(Signal::SIGUSR2, "shutdown")
+        run_systemctl("poweroff", "shutdown")
     }
 }

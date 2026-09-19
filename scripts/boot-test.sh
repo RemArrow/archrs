@@ -1,13 +1,14 @@
 #!/bin/sh
 # Boots a real, minimal archrs system in QEMU and checks that it actually
-# comes up: archrs-init as genuine PID 1, mounts proc/sys/dev, runs
+# comes up: real systemd as genuine PID 1 (this project's real init as of
+# Phase 13, replacing its own former archrs-init — see ROADMAP.md), runs
 # coreutils-rs's bash to exercise a handful of utilities, and shuts itself
-# down via `poweroff` -> SIGUSR2 -> a real reboot(2) syscall. See
-# ROADMAP.md's "Real boot test" section for what this is checking and why
-# it matters (an unshare sandbox can't grant the privileges real
-# mount(2)/reboot(2) calls need, so this is the only way to verify that
-# code path for real). For a real *interactive* login session instead of
-# this fixed script, see scripts/login-test.sh.
+# down via `poweroff` -> real `systemctl poweroff` -> a real reboot(2)
+# syscall. See ROADMAP.md's "Real boot test" section for what this is
+# checking and why it matters (an unshare sandbox can't grant the
+# privileges real mount(2)/reboot(2) calls need, so this is the only way
+# to verify that code path for real). For a real *interactive* login
+# session instead of this fixed script, see scripts/login-test.sh.
 #
 # Needs no host root: pacman-rs installs into a plain directory, and
 # `mke2fs -d` populates an ext4 image straight from that directory without
@@ -113,17 +114,17 @@ echo "ARCHRS-BOOT-TEST: sudo result: $(sudo -u testuser id -un 2>&1)"
 echo "ARCHRS-BOOT-TEST: lsmod exit code: $(lsmod >/dev/null 2>&1; echo $?)"
 echo "ARCHRS-BOOT-TEST: rmmod nonexistent: $(rmmod not_a_real_module 2>&1)"
 echo "ARCHRS-BOOT-TEST: modprobe nonexistent: $(modprobe not_a_real_module 2>&1)"
-# A non-root user must not be able to power the machine off — kill(2)'s
-# own real permission check (sender's uid must match PID 1's, i.e. be
-# root) does this for free, no separate check needed in poweroff_cmd.rs.
+# A non-root user must not be able to power the machine off — real
+# systemctl/polkit's own permission model does this for free, no
+# separate check needed in power_cmd.rs.
 echo "ARCHRS-BOOT-TEST: unprivileged poweroff: $(su - testuser -c poweroff 2>&1)"
 echo "ARCHRS-BOOT-TEST: all checks complete, powering off"
 poweroff
-sleep 5
+sleep 15
 echo "ARCHRS-BOOT-TEST: FAIL: still alive after poweroff"
 SCRIPT
 chmod +x "$ROOTFS/root/boot-test.sh"
-echo "/bin/sh /root/boot-test.sh" > "$ROOTFS/etc/archrs-init.conf"
+write_boot_service archrs-boot-test.service /root/boot-test.sh
 
 echo "boot-test: building disk image..."
 rm -f "$IMAGE"
@@ -135,11 +136,27 @@ if [ -w /dev/kvm ]; then
     KVM_ARGS="-enable-kvm"
 fi
 
+# `init=/usr/lib/systemd/systemd` explicitly, rather than relying on the
+# kernel's own default `/sbin/init` lookup — found the hard way that
+# `/usr/bin/init` (what `/sbin/init` resolves to, via the real merged-
+# `/sbin -> usr/bin` symlink) never actually gets created by a `--root`
+# install: real Arch/Manjaro's `systemd` package apparently creates that
+# specific symlink via a post-install hook, same category of gap as the
+# vmlinuz/mkinitcpio-output naming already found in
+# crates/archrs-install/src/build.rs, and this script (unlike
+# archrs-install's own real GRUB+initramfs boot, where the initramfs's
+# own systemd instance resolves the target's init a different, more
+# robust way during switch_root) boots the kernel directly with no
+# initramfs at all, so nothing else papers over it. Confirmed directly:
+# without this, the kernel fell through its entire fallback chain to
+# `/bin/sh` as PID 1, which then died on the same terminal-size DSR
+# query issue documented in login-test-driver.py, and PID 1 dying is
+# always a kernel panic ("Attempted to kill init!").
 echo "boot-test: booting..."
 timeout 60 qemu-system-x86_64 \
     -kernel "$KERNEL" \
     -drive file="$IMAGE",format=raw,if=virtio \
-    -append "root=/dev/vda rw console=ttyS0 init=/sbin/init.archrs panic=1" \
+    -append "root=/dev/vda rw console=ttyS0 panic=1 init=/usr/lib/systemd/systemd" \
     -m 1G \
     -nographic \
     -no-reboot \
@@ -160,8 +177,6 @@ check() {
     fi
 }
 
-check "archrs-init: mounted proc on /proc"
-check "archrs-init: mounted sysfs on /sys"
 check "ARCHRS-BOOT-TEST: /proc/1 accessible: PASS"
 check "ARCHRS-BOOT-TEST: arithmetic result: 42"
 check "ARCHRS-BOOT-TEST: file roundtrip: hello from archrs vm"
@@ -171,7 +186,12 @@ check "ARCHRS-BOOT-TEST: dmesg first line: [    0.000000] Linux version"
 check "ARCHRS-BOOT-TEST: chroot exit code: 0"
 check "ARCHRS-BOOT-TEST: tmpfs write: written through tmpfs"
 check "ARCHRS-BOOT-TEST: tmpfs unmounted: 0"
-check "1: lo: <LOOPBACK>"
+# Real systemd-networkd now actually brings lo up with real addresses
+# (127.0.0.1/8, ::1/128) — it didn't before systemd replaced
+# archrs-init, since nothing configured it. A genuine improvement, not
+# a fidelity regression to paper over.
+check "1: lo: <UP | LOOPBACK | RUNNING | LOWERUP>"
+check "inet 127.0.0.1/8 scope host"
 check "vda         254:0"
 check "1G 0  disk /|"
 check "ARCHRS-BOOT-TEST: lspci exit code: 0"
@@ -188,8 +208,8 @@ fi
 check "ARCHRS-BOOT-TEST: lsmod exit code: 0"
 check "ARCHRS-BOOT-TEST: rmmod nonexistent: libkmod: ERROR: kmod_module_remove_module: could not remove 'not_a_real_module': No such file or directory"
 check "ARCHRS-BOOT-TEST: modprobe nonexistent: modprobe: module 'not_a_real_module' not found"
-check "ARCHRS-BOOT-TEST: unprivileged poweroff: poweroff: could not signal PID 1:"
-check "archrs-init: powering off"
+check "ARCHRS-BOOT-TEST: unprivileged poweroff: Call to PowerOff failed: Access denied"
+check "ARCHRS-BOOT-TEST: all checks complete, powering off"
 check "reboot: Power down"
 
 if [ "$fail" -eq 0 ]; then

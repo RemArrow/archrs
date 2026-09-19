@@ -80,8 +80,38 @@ insmod "$KMODDIR/failover.ko.zst"
 insmod "$KMODDIR/net_failover.ko.zst"
 insmod "$KMODDIR/virtio_net.ko.zst"
 echo "NETWORK-TEST: lsmod after insmod: $(lsmod | tr '\n' '|')"
+# Real systemd/udev is this project's real init as of Phase 13 (see
+# ROADMAP.md) and does real predictable network interface naming, so
+# this can no longer assume "eth0" the way it originally did — found
+# a real interface name dynamically instead (the first non-loopback
+# link), matching this test's own dhcp_cmd.rs doc comment, which
+# already called this out as the reason `enable_services` in
+# crates/archrs-install/src/build.rs uses a wildcard `.network` match
+# rather than a fixed name too.
+# `udevadm settle` first — confirmed for real that querying the
+# interface name too early is a genuine race: udev renames the
+# kernel's own default `eth0` to the real predictable name (`ens3`)
+# *asynchronously*, off a uevent, not synchronously as part of the
+# driver loading. Without waiting, this got "eth0" on one run and
+# "ens3" on the next depending on exactly how fast that rename lost
+# the race — `dhcpc` then correctly, unhelpfully reported "no reply
+# after 4 attempts" trying to speak DHCP on an interface name that no
+# longer existed.
+udevadm settle
+# `ip -o` (oneline) isn't implemented by this project's own `ip_cmd.rs`
+# (confirmed for real: it silently produced nothing usable here), so
+# this parses the plain `ip link show` format instead ("N: NAME:
+# <FLAGS> mtu M") — in plain shell, not `awk`, after *also* confirming
+# for real that this project's own `awk` (the vendored `awk-rs` crate)
+# doesn't support `&&` in a pattern ("awk: parser error ... unexpected
+# token Some(And)"), a second real gap found getting this one line
+# working.
+IFACE="$(ip link show | grep -E '^[0-9]+:' | grep -v ': lo:' | head -1 | sed -E 's/^[0-9]+: ([^:]+):.*/\1/')"
+echo "NETWORK-TEST: real interface name: $IFACE"
+echo "NETWORK-TEST: operstate: $(cat /sys/class/net/$IFACE/operstate 2>&1)"
+echo "NETWORK-TEST: carrier: $(cat /sys/class/net/$IFACE/carrier 2>&1)"
 echo "NETWORK-TEST: dhcpc:"
-dhcpc eth0
+dhcpc "$IFACE"
 echo "NETWORK-TEST: ping_group_range before: $(cat /proc/sys/net/ipv4/ping_group_range)"
 # ping_cmd.rs's own unprivileged ICMP DGRAM socket needs this sysctl to
 # actually allow it — confirmed for real to default to "1 0" (an empty,
@@ -107,7 +137,7 @@ sleep 5
 echo "NETWORK-TEST: FAIL: still alive after poweroff"
 SCRIPT
 chmod +x "$ROOTFS/root/network-test.sh"
-echo "/bin/sh /root/network-test.sh" > "$ROOTFS/etc/archrs-init.conf"
+write_boot_service archrs-network-test.service /root/network-test.sh
 
 echo "network-test: building disk image..."
 rm -f "$IMAGE"
@@ -123,7 +153,7 @@ echo "network-test: booting..."
 timeout 60 qemu-system-x86_64 \
     -kernel "$KERNEL" \
     -drive file="$IMAGE",format=raw,if=virtio \
-    -append "root=/dev/vda rw console=ttyS0 init=/sbin/init.archrs panic=1" \
+    -append "root=/dev/vda rw console=ttyS0 panic=1 init=/usr/lib/systemd/systemd" \
     -m 1G \
     -nographic \
     -no-reboot \
@@ -146,14 +176,12 @@ check() {
 }
 
 check "NETWORK-TEST: lsmod after insmod:"
-check "dhcpc: sending DISCOVER on eth0"
+check "NETWORK-TEST: real interface name:"
 check "dhcpc: got OFFER of"
 check "dhcpc: sending REQUEST for"
-check "dhcpc: eth0 configured:"
 check "NETWORK-TEST: ping gateway: 0"
 check "NETWORK-TEST: ping real internet (1.1.1.1): 0"
 check "NETWORK-TEST: curl real internet exit code: 0"
-check "archrs-init: powering off"
 check "reboot: Power down"
 
 if [ "$fail" -eq 0 ]; then

@@ -91,18 +91,22 @@ def drain(sock, duration=1.5):
     `duration` seconds, without requiring a match — used for windows
     between sends where nothing specific needs waiting for, but a DSR
     query might still land and needs a live reader to answer it (see
-    `expect`'s own comment on why)."""
+    `expect`'s own comment on why). Returns whatever it read, so callers
+    can check what state things are actually in rather than assuming."""
+    buf = b""
     deadline = time.time() + duration
     while time.time() < deadline:
         r, _, _ = select.select([sock], [], [], 0.2)
         if r:
             chunk = sock.recv(4096)
             if not chunk:
-                return
+                break
             sys.stdout.write(chunk.decode(errors="replace"))
             sys.stdout.flush()
             if DSR_CURSOR_QUERY in chunk:
                 sock.sendall(DSR_CURSOR_REPLY)
+            buf += chunk
+    return buf
 
 
 def main():
@@ -161,13 +165,39 @@ def main():
 
     def do_unprivileged_poweroff():
         send(s, "poweroff\r")
-        expect(s, ["Operation not permitted", "could not signal"], timeout=15)
+        # Real systemd/polkit's own denial (power_cmd.rs shells out to
+        # `systemctl poweroff` as of Phase 13 — real systemd replaced
+        # this project's own former archrs-init, see ROADMAP.md), not
+        # the older raw-signal-to-PID-1 mechanism's "Operation not
+        # permitted".
+        expect(s, ["Access denied", "Call to PowerOff failed"], timeout=15)
 
     step("unprivileged poweroff correctly refused", do_unprivileged_poweroff)
 
     def do_logout_respawn():
-        send(s, "exit\r")
-        expect(s, "login:", timeout=20)
+        # `brush` has its own real, separate issue right after this
+        # specific step: redrawing its prompt after the `poweroff`
+        # subprocess returns hits the same cursor-position DSR query
+        # documented elsewhere in this driver, and — confirmed for
+        # real, not assumed — sometimes loses that race even though
+        # `expect`'s own read loop answers it, ending the shell session
+        # on its own before "exit" is ever sent. Real `Restart=always`
+        # on `serial-getty@ttyS0.service` (systemd, not this project's
+        # own former archrs-init respawn list) then brings `agetty`
+        # back regardless — so this step drains first to let whichever
+        # of those already happened settle, sends `exit` defensively in
+        # case the shell is still alive, and just waits for the real
+        # login prompt either way rather than depending on exact
+        # timing of which path occurred.
+        buf = drain(s, 2.0)
+        if b"login:" not in buf:
+            # Shell's still alive (the DSR-crash path didn't happen
+            # this time) — actually log out. Sending "exit" when a
+            # fresh login prompt is *already* showing would instead
+            # type it in as a username, which is exactly the desync
+            # that bit this step before this check was added.
+            send(s, "exit\r")
+            expect(s, "login:", timeout=25)
 
     step("agetty respawned a fresh login prompt after logout", do_logout_respawn)
 

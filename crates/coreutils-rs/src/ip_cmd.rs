@@ -185,6 +185,40 @@ pub(crate) fn set_link_up(index: u32, up: bool) -> Result<(), String> {
     netlink_request(RouteNetlinkMessage::SetLink(msg), 0)
 }
 
+/// Polls (up to `timeout`) for a link's real carrier (`IFF_LOWER_UP`) to
+/// assert. `set_link_up` only sets the *administrative* state
+/// (`IFF_UP`) — real hardware/virtio link negotiation is a genuinely
+/// separate, asynchronous step that can lag behind it by a real,
+/// non-zero amount, found the hard way in `dhcp_cmd.rs`: sending a real
+/// DHCP DISCOVER immediately after `set_link_up` returned worked
+/// reliably in isolation, but started reproducibly timing out out once
+/// real `systemd`/`udev` was added as this project's own init (Phase
+/// 13) — confirmed via `operstate: down` at the moment `dhcpc` had
+/// already logged "sending DISCOVER", meaning that specific broadcast
+/// went out (if at all) before the link was actually ready, not a
+/// `dhcpc`-specific regression so much as a pre-existing race that
+/// happened to never lose before. A real DHCP client on real hardware
+/// (negotiating with a real switch) needs this exact same wait for
+/// exactly the same reason, so this belongs in `ip_cmd.rs` itself, not
+/// papered over as a test-only sleep.
+pub(crate) fn wait_for_carrier(index: u32, timeout: std::time::Duration) -> Result<(), String> {
+    use netlink_packet_route::link::LinkFlags;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let up = get_links()?
+            .into_iter()
+            .find(|l| l.header.index == index)
+            .is_some_and(|l| l.header.flags.contains(LinkFlags::LowerUp));
+        if up {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!("link carrier never came up within {:?}", timeout));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 /// `ip addr add CIDR dev DEV` — `RTM_NEWADDR`. `NLM_F_CREATE|NLM_F_EXCL`
 /// matches real `ip addr add`'s own semantics: create a new address,
 /// fail if that exact address already exists (rather than replacing it,

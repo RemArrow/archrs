@@ -1930,6 +1930,229 @@ for "usable" — editing a config file with `sed`/sending it through
       isolates the thing being verified, rather than the most
       "end-to-end"-looking one.
 
+### Phase 12 — a real installer for real hardware (complete)
+Everything through Phase 11 only ever produced throwaway QEMU test
+images, rebuilt from scratch on every run. `archrs-install`
+(`crates/archrs-install`) is the thing that turns "a bunch of verified
+components" into a system someone could actually have: a real
+GPT/UEFI disk image with a real GRUB bootloader, a real kernel, a real
+`mkinitcpio` initramfs, and this project's own userland, written either
+to a plain file (`--output-image`, flash it yourself or boot it in a
+hypervisor) or directly to a real block device (`--target`, gated
+behind real safety checks — refuses a mounted device or the device
+backing the running system, requires typing the exact device path
+back).
+
+The original design tried to extend this project's usual "no host
+root" technique (build plain filesystem images, point tools at plain
+directories) as far as it would go. It didn't go far enough, for two
+separate real reasons hit one after another while actually building
+and testing this, not assumed up front:
+- `grub-install`, even in its documented "no chroot" mode, opens the
+  *real* underlying block device of wherever its target directory
+  lives, and needs real permission to read it (`/dev/nvme0n1p2` on
+  this dev machine) — confirmed by the exact failure changing once
+  run as real root.
+- Once genuinely root, `grub-install` then correctly *refused* a
+  plain, unmounted directory outright ("doesn't look like an EFI
+  partition") — `--efi-directory` has to actually be a real mounted
+  FAT/EFI filesystem.
+Both are real `grub-install` behavior, not flags to work around, so
+`archrs-install` does the conventional thing instead: real `parted`
+partitions the target (a loop device for `--output-image`, so the
+exact same code path is exercised either way, not a simplified
+stand-in), real `mkfs.fat`/`mke2fs` format the partitions, and the
+build genuinely mounts them (`device.rs`) — the one thing this whole
+project otherwise avoids, here unavoidable. Partitioning itself
+switched from the `gpt` crate (tried first) to shelling out to real
+`parted`: the `gpt` crate's own `GptDisk::write()` produced a table
+the kernel's partition scanner never recognized on a loop device,
+while `parted`+`partprobe` worked immediately in the same environment
+— root-caused no further than that, and reasonable either way since
+every other privileged step here already shells out to a real tool
+(`mkfs.fat`, `mke2fs`, `grub-install`, `mkinitcpio`).
+
+Real, previously-unknown gaps found and fixed purely by actually
+building and booting the result, not by reasoning about it:
+- **Manjaro has no plain `linux` metapackage** (confirmed: `pacman-rs
+  -S linux` genuinely fails with "unresolved dependencies: linux" on
+  this dev machine's own mirrors) — its repos carry versioned packages
+  (`linux71` for `7.1.x`) instead. `kernel_package_name` detects this
+  from `uname -r` containing "MANJARO" rather than hardcoding one
+  version.
+- **`grub-install` fails outright on a `tmpfs`-backed work directory**
+  ("failed to get canonical path of `tmpfs`") — the default work
+  directory moved from `/tmp` (tmpfs on this dev machine) to the
+  current working directory.
+- **The real, packaged kernel image and `mkinitcpio`'s own generated
+  initramfs never land at their conventional `/boot` paths on a
+  `--root` install** — both are populated by real pacman *post-install
+  hooks* this project's own `pacman-rs` deliberately doesn't run for
+  `--root` installs (same reasoning as the already-documented
+  `.install` scriptlet gate). The kernel image's real, hook-independent
+  location is `/usr/lib/modules/<kernelver>/vmlinuz` (confirmed
+  directly); `copy_kernel_image` copies it out under this tool's own
+  fixed name rather than trying to replicate whatever hook-driven name
+  a given mirror's kernel package happens to use. `mkinitcpio` itself
+  needed no such workaround — it's a real, direct binary invocation
+  (`-r`/`-c`/`-k`/`-g`), not hook-dependent.
+- **A fresh, un-hooked `systemd` install starts nothing** — no login
+  prompt, no networking, and `systemd-firstboot.service` (a real
+  "static" unit, confirmed via `systemctl list-unit-files`) runs
+  unconditionally on first boot and interactively prompts on the
+  console for a timezone if one isn't already set, hanging a real
+  first boot with no way to answer it. `enable_services` pre-populates
+  `/etc/localtime`/`/etc/locale.conf` and masks that unit, and enables
+  real `getty@tty1.service`/`serial-getty@ttyS0.service`/
+  `systemd-networkd.service` (plus a wildcard `Name=en* eth*` DHCP
+  `.network` file, not a fixed interface name — see Phase 13's own
+  section on why that specifically matters now) via real
+  `systemctl --root=DIR enable`, genuine documented offline support
+  built for exactly this.
+
+Not implemented: BIOS/MBR boot (UEFI only), multiple disks, LVM/LUKS/
+RAID, resizing an existing installation, `/home` as a separate
+partition, swap. `--target /dev/sdX` (the real destructive path) has
+been implemented and safety-checked but deliberately not run against
+a real device by anyone building this project so far — verified
+instead via `--output-image` + a real OVMF UEFI boot in QEMU (not
+`-kernel` direct boot like every other test script here), which
+exercises the entire real GRUB → kernel → initramfs → systemd chain
+end to end, including a real login prompt reachable afterward.
+
+### Phase 13 — systemd replaces archrs-init (complete)
+A user-requested architecture change, not something this session set
+out to do: full replacement, dropping `archrs-init` (Phase 3) from the
+project entirely rather than keeping it as an alternative. Real
+systemd is now this project's only real init.
+
+**Why, beyond just "the user asked"**: `archrs-install`'s own real
+initramfs (built by real `mkinitcpio`) already runs a real, temporary
+systemd instance for early boot regardless of what the final system's
+own PID 1 is — real Manjaro's default `mkinitcpio.conf` includes the
+`systemd` hook, confirmed directly by watching it in the boot log
+("Manjaro Linux ... comm=systemd") before it `switch_root`s to
+whatever `/sbin/init` resolves to. Using systemd for the *whole*
+system too, not just that early-boot phase, matches how real Arch/
+Manjaro actually boot and is consistent with this project's own
+established pattern of using real supporting infrastructure (real
+kernel, real GRUB, real PAM) rather than reinventing it — extended
+here to the one piece (init/service supervision) this project had
+previously reinvented from scratch.
+
+**What this genuinely gains, not just swaps**: real `udev` (merged
+into systemd) means `/dev/disk/by-*` symlinks and hotplug module
+loading are now real, closing the "no udev/mdev equivalent" caveat
+every earlier phase involving `insmod`/`modprobe`/`lsblk` had to note.
+Real `systemd-networkd` + a wildcard `.network` file means automatic
+boot-time DHCP no longer needs to know a real interface name ahead of
+time. Real `journald`/polkit mean `reboot`/`poweroff` (`power_cmd.rs`)
+now go through genuine, standard privilege enforcement instead of a
+bespoke signal-to-PID-1 scheme.
+
+- [x] **Removed `crates/archrs-init` entirely** (Phase 3's own crate)
+      from the workspace.
+- [x] **`power_cmd.rs` rewritten**: `reboot`/`poweroff`/`halt`/
+      `shutdown` now shell out to real `systemctl reboot`/`poweroff`/
+      `halt` instead of sending `SIGUSR1`/`SIGUSR2` to PID 1 —
+      `systemctl` itself does the real privilege enforcement (polkit
+      under a session, trivially for root), the same "let the real
+      mechanism's own permission model do the work" principle already
+      used for `su`/`sudo`. Verified for real in `boot-test.sh`
+      (root's own `poweroff` genuinely powers the VM off) and
+      `login-test.sh` (an unprivileged user's `poweroff` gets a real,
+      distinct denial: "Call to PowerOff failed: Access denied", not
+      the old raw-signal `EPERM`).
+- [x] **`scripts/lib-build-rootfs.sh`/`boot-test.sh`/`login-test.sh`/
+      `network-test.sh` all updated** to install real `systemd`/`dbus`
+      instead of `archrs-init`, and to drive automatic boot-time
+      scripts via real systemd units (`write_boot_service`, the same
+      real `systemctl --root=DIR enable` technique `archrs-install`
+      uses) instead of writing `archrs-init.conf` directly.
+
+  Real, previously-unknown bugs found and fixed getting these four
+  scripts working again, none of them hypothetical:
+  - **The kernel's own default `/sbin/init` genuinely doesn't resolve**
+    on a bare `--root` install booted with no initramfs at all (every
+    test script here still uses QEMU's `-kernel` direct boot, unlike
+    `archrs-install`'s own real GRUB+initramfs path) — `/usr/bin/init`
+    (what `/sbin/init` symlinks to, via the real merged-`/sbin`
+    convention) turned out to be hook-generated too, the same category
+    of gap as Phase 12's own vmlinuz/mkinitcpio findings. Confirmed by
+    a real kernel panic ("Attempted to kill init!") with `Comm: sh` —
+    the kernel fell all the way through its fallback chain to `/bin/sh`,
+    which then died on its own unrelated real issue (below) and took
+    PID 1 down with it. Fixed by passing
+    `init=/usr/lib/systemd/systemd` explicitly on these test scripts'
+    own kernel command lines.
+  - **`systemd-firstboot.service`'s interactive prompt** — the same
+    real issue and fix as Phase 12's own section above; these test
+    scripts needed the identical pre-populate-and-mask fix
+    independently, since they don't share `archrs-install`'s own
+    rootfs-build code path.
+  - **Real predictable network interface naming is a genuine, timing-
+    sensitive race**: real `udev` renames the kernel's own default
+    `eth0` to a real persistent name (`ens3` on this dev machine's
+    QEMU/virtio setup) *asynchronously*, off a uevent — querying it
+    too early is a real race, not a hypothetical one: the exact same
+    boot produced `eth0` on one run and `ens3` on the next depending
+    on who won. `network-test.sh` now runs `udevadm settle` before
+    ever asking `ip link show` what the real interface is called, and
+    no longer hardcodes `eth0` (`dhcp_cmd.rs`'s own doc comment already
+    flagged this as the reason `archrs-install`'s own `.network` file
+    uses a wildcard match, not a fixed name — this is that same
+    prediction landing for real in this project's own test suite).
+  - **This project's own `awk` (the vendored `awk-rs` crate) doesn't
+    support `&&` in a pattern** ("parser error ... unexpected token
+    Some(And)") — found trying to write one line of interface-name
+    parsing in `network-test.sh`'s own in-VM script. Worked around
+    with plain `grep`+`sed` instead of fixing the crate; a real,
+    narrow gap worth knowing about if a future script needs a
+    multi-condition `awk` pattern.
+  - **A genuine, previously-latent bug in `dhcp_cmd.rs` itself**,
+    unmasked (not caused) by this migration: a plain `UdpSocket` bound
+    to `0.0.0.0:68` can send the broadcast DISCOVER/REQUEST fine, but
+    real DHCP servers (QEMU's own slirp included) commonly reply with
+    a *unicast* packet addressed to the newly offered IP — an address
+    the interface doesn't have yet, so the kernel's own IP layer drops
+    it before it ever reaches a regular socket, even though the NIC
+    genuinely received it (confirmed directly via
+    `/sys/class/net/*/statistics/rx_packets` incrementing while
+    `dhcpc` itself received nothing). Root-caused, not guessed: real
+    `dhclient` (ISC) was installed side by side as an independent
+    sanity check on the exact same interface and worked immediately —
+    its own log even names the real mechanism it uses instead
+    (`Listening on LPF/ens3/...`, a raw `AF_PACKET` socket). Fixed the
+    same way: `dhcp_cmd.rs` now receives on a real `AF_PACKET`/
+    `SOCK_DGRAM` socket bound to the interface (sending is unaffected
+    — broadcasting from an unconfigured interface was never the
+    problem). No safe `nix` wrapper builds an interface-specific
+    `sockaddr_ll` for `bind`, so this is a small, deliberate, real
+    `unsafe` FFI block (`libc::socket`/`bind`/`setsockopt`/`recv`
+    directly) — the same "no safe abstraction fits, so honest raw FFI
+    beats a worse workaround" call already made elsewhere in this
+    project. This is genuinely universal DHCP client folklore, not an
+    artifact of this project's own environment — real hardware talking
+    to a real DHCP server hits the identical issue.
+  - **A real cross-contamination bug between the three shared-rootfs
+    test scripts**: unlike the old single-file `archrs-init.conf` each
+    script simply overwrote, real systemd units *persist* once
+    enabled — running `login-test.sh` after `boot-test.sh` had already
+    run against the same cached `$ROOTFS` started *both* scripts' own
+    services in the same boot, and `boot-test.sh`'s own script calling
+    `poweroff` partway through shut the VM down before
+    `login-test.sh`'s driver ever got to interact with it. Fixed in
+    `lib-build-rootfs.sh`: every known test unit is explicitly
+    disabled and removed before each script enables its own —
+    confirmed fixed by running all three scripts back to back against
+    the same cached rootfs and seeing each pass cleanly on its own.
+- [x] **Real loopback configuration**: `boot-test.sh`'s own `ip addr`
+      check needed updating — real `systemd-networkd` now actually
+      brings `lo` up with real addresses (`127.0.0.1/8`, `::1/128`),
+      which nothing did before systemd replaced `archrs-init`. A
+      genuine fidelity improvement to update a check for, not a
+      regression to paper over.
+
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,
 most already upstream projects in their own languages) is not a software

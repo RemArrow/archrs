@@ -234,8 +234,7 @@ const UTILS: &[(&str, &str)] = &[
     ("insmod", "archrs-native"),
     ("rmmod", "archrs-native"),
     ("modprobe", "archrs-native"),
-    // The user-facing side of archrs-init's own SIGUSR1/SIGUSR2 shutdown
-    // mechanism — see power_cmd.rs.
+    // Thin wrappers around real systemctl — see power_cmd.rs.
     ("reboot", "archrs-native"),
     ("poweroff", "archrs-native"),
     ("halt", "archrs-native"),

@@ -228,4 +228,10 @@ const UTILS: &[(&str, &str)] = &[
     ("chfn", "uu_chfn"),
     ("chsh", "uu_chsh"),
     ("newgrp", "uu_newgrp"),
+    // Kernel module management, via real `libkmod.so` FFI bindings —
+    // see kmod_cmd.rs.
+    ("lsmod", "archrs-native"),
+    ("insmod", "archrs-native"),
+    ("rmmod", "archrs-native"),
+    ("modprobe", "archrs-native"),
 ];

@@ -1644,6 +1644,54 @@ rather than an oversight.
       open status — `cp`'d into the image as the host's own uid, not
       chowned to root, for the same "no host root available" reason.
 
+- [x] **`insmod`/`rmmod`/`lsmod`/`modprobe`** — picks up the last
+      item from Phase 5's original closing-boundary list ("no kernel
+      module loading"). Vendors the `kmod` crate's real FFI bindings
+      to the system's actual `libkmod.so` (Arch's real `kmod`
+      package), rather than reimplementing `modprobe`'s real job:
+      resolving a module name/alias against `modules.dep`/
+      `modules.alias` (`depmod`-generated dependency/alias data) to
+      find and load the right `.ko` plus its dependencies in order —
+      genuinely complex logic not worth re-deriving when `libkmod`
+      already gets it right. `lsmod`'s output matched real `lsmod`
+      byte-for-byte on this dev machine (checked directly, not
+      spot-checked — same real modules, sizes, refcounts, and holder
+      lists, `/proc/modules`-derived column layout).
+      Found and fixed a real bug in `coreutils-rs`'s own dispatch
+      while wiring this in (not a `kmod`-crate issue): every hand-
+      rolled `_cmd.rs` module (`mount_cmd.rs` etc.) expects its own
+      `args` iterator to still include argv[0] (its own utility name,
+      standard C convention — this project's dispatch always passes
+      the utility name as the first element, matching what
+      `uucore::Args`-based `uu_*` crates already expect), and the
+      first version of `kmod_cmd.rs` didn't skip it — so `insmod
+      /path/to.ko` read "insmod" itself as the file path instead of
+      the real argument. Caught immediately by testing the real error
+      path (`insmod` against a deliberately nonexistent file printed
+      "could not open 'insmod'" instead of the real path), fixed by
+      skipping argv[0] like every other hand-rolled command here
+      already does.
+      Not exercised end to end (a genuine insert/remove cycle against
+      a real loadable module): this dev machine has no kernel headers
+      matching its own running kernel (`linux-headers` isn't
+      installed), so there's no way to build a real out-of-tree test
+      `.ko`. What *is* verified for real, in the boot test as genuine
+      root: `lsmod`'s real output, and — against a name that
+      genuinely doesn't exist — `rmmod`/`modprobe` both correctly
+      report "No such file or directory"/"module ... not found" via
+      real `libkmod` FFI calls, not a synthetic error. This closes out
+      Phase 5's kernel-module-loading exclusion with the same honesty
+      as the rest of this list: the mechanism is real and verified as
+      far as this environment can reach, and the remaining gap (a real
+      load/unload cycle) is named rather than assumed away.
+
+Phase 5's original closing-boundary list — interactive/curses tools,
+netlink write operations, privilege-management tools, kernel module
+loading — is now fully worked through except interactive/curses tools
+(`top`, `vim`) and netlink write operations (`ip link set`/`ip addr
+add`/`ip route add`), both still open on the same "not needed yet, not
+impossible" footing they always were.
+
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,
 most already upstream projects in their own languages) is not a software

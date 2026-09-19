@@ -61,9 +61,9 @@ if [ ! -f "$ROOTFS/.base-installed" ]; then
     # below by this project's own coreutils-rs/privtools-rs equivalents
     # where one exists — only the supporting files are actually used from
     # them, same pattern as glibc/filesystem/bash/xz/file already below.
-    echo "boot-test: installing base system into $ROOTFS (glibc, filesystem, bash, xz, file, pam, sudo, shadow, util-linux)..."
+    echo "boot-test: installing base system into $ROOTFS (glibc, filesystem, bash, xz, file, pam, sudo, shadow, util-linux, kmod)..."
     "$TARGET/pacman-rs" -Sy --root "$ROOTFS"
-    "$TARGET/pacman-rs" -S glibc filesystem bash xz file pam sudo shadow util-linux --root "$ROOTFS"
+    "$TARGET/pacman-rs" -S glibc filesystem bash xz file pam sudo shadow util-linux kmod --root "$ROOTFS"
     touch "$ROOTFS/.base-installed"
 fi
 
@@ -151,6 +151,9 @@ echo "ARCHRS-BOOT-TEST: su result: $(su - testuser -c 'id -un')"
 # reachable here; sudo's full functional path needs a real- or
 # fake-rooted image build, deliberately not done yet (see ROADMAP.md).
 echo "ARCHRS-BOOT-TEST: sudo refusal: $(sudo -u testuser id -un 2>&1)"
+echo "ARCHRS-BOOT-TEST: lsmod exit code: $(lsmod >/dev/null 2>&1; echo $?)"
+echo "ARCHRS-BOOT-TEST: rmmod nonexistent: $(rmmod not_a_real_module 2>&1)"
+echo "ARCHRS-BOOT-TEST: modprobe nonexistent: $(modprobe not_a_real_module 2>&1)"
 echo "ARCHRS-BOOT-TEST: all checks complete, powering off"
 kill -USR2 1
 sleep 5
@@ -215,6 +218,9 @@ check "ARCHRS-BOOT-TEST: chpasswd exit code: 0"
 check "ARCHRS-BOOT-TEST: shadow hash: 1"
 check "ARCHRS-BOOT-TEST: su result: testuser"
 check "ARCHRS-BOOT-TEST: sudo refusal: sudo: invalid configuration: /etc must be owned by root"
+check "ARCHRS-BOOT-TEST: lsmod exit code: 0"
+check "ARCHRS-BOOT-TEST: rmmod nonexistent: libkmod: ERROR: kmod_module_remove_module: could not remove 'not_a_real_module': No such file or directory"
+check "ARCHRS-BOOT-TEST: modprobe nonexistent: modprobe: module 'not_a_real_module' not found"
 check "archrs-init: powering off"
 check "reboot: Power down"
 

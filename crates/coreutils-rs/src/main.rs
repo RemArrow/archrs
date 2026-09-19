@@ -32,6 +32,7 @@ mod file_cmd;
 mod grep_cmd;
 mod gzip_cmd;
 mod ip_cmd;
+mod kmod_cmd;
 mod less_cmd;
 mod lsblk_cmd;
 mod lspci_cmd;
@@ -234,6 +235,10 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "chfn" => uu_chfn::uumain(args),
         "chsh" => uu_chsh::uumain(args),
         "newgrp" => uu_newgrp::uumain(args),
+        "lsmod" => kmod_cmd::run_lsmod(args),
+        "insmod" => kmod_cmd::run_insmod(args),
+        "rmmod" => kmod_cmd::run_rmmod(args),
+        "modprobe" => kmod_cmd::run_modprobe(args),
         _ => return None,
     })
 }

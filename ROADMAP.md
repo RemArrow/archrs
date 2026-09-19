@@ -717,6 +717,28 @@ ever *ran* it.
       correctly skips execution entirely for a non-`/` root, while
       still installing files and saving the `.INSTALL` scriptlet to
       the local db as before.
+
+**Extended to every real checksum algorithm makepkg supports except
+`cksums` (2026-09-19).** Found a real small package using the oldest
+one by grepping several candidates' PKGBUILDs for `md5sums=`: `fzy` (a
+small, real C fuzzy-finder — `md5sums` only, real `build()`/
+`package()`, no other complications).
+- [x] `md5sums`/`sha1sums`/`sha224sums`/`sha384sums` — added to
+      `alpm_rs::verify::ChecksumKind` alongside the already-supported
+      `b2sums`/`sha512sums`/`sha256sums`, via the `md-5`/`sha1` crates
+      (pinned to the `0.10.x` line to match `sha2`/`blake2`'s own
+      `digest 0.10` dependency — the same version-mismatch problem
+      already hit and solved when `blake2` was first added) plus
+      `sha2`'s own `Sha224`/`Sha384` types. Verified against known
+      vectors the same way `b2sums`/`sha512sums` were. `cksums` (a
+      non-cryptographic CRC, not a hash — different enough in kind
+      that it doesn't fit this `Digest`-based path) remains the one
+      real gap.
+      Verified for real against `fzy`: downloaded, correctly verified
+      against its real `md5sums` entry (`makepkg-rs: 0.9.tar.gz
+      md5sums OK`), built, installed via `pacman-rs -U`, and the
+      installed binary ran and functioned correctly (`fzy -e` matching
+      a real candidate list).
 - [x] `which` and `patch` — the remaining small, well-scoped
       base-devel-adjacent utilities PKGBUILDs commonly need. `which`
       vendors the `which` crate (real cross-platform `PATH` lookup);

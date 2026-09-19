@@ -4,7 +4,9 @@ use std::path::Path;
 use std::process::Command;
 
 use blake2::Blake2b512;
-use sha2::{Digest, Sha256, Sha512};
+use md5::Md5;
+use sha1::Sha1;
+use sha2::{Digest, Sha224, Sha256, Sha384, Sha512};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -35,17 +37,22 @@ pub fn verify_checksum(path: &Path, expected_sha256: &str) -> Result<bool, Verif
     Ok(sha256_hex(path)?.eq_ignore_ascii_case(expected_sha256))
 }
 
-/// The `*sums=()` array variants real PKGBUILDs actually use in
-/// practice for source integrity — `b2sums` (BLAKE2b-512, makepkg's
-/// own recommended default since it added support) and `sha512sums`
-/// alongside the already-supported `sha256sums`. `md5sums`/
-/// `sha1sums`/`sha224sums`/`sha384sums`/`cksums` are real makepkg
-/// variables too but rare in the wild; not implemented here.
+/// Every `*sums=()` array variant real makepkg supports, in the order
+/// `makepkg-rs` prefers them when more than one is present (strongest/
+/// most-recommended first). `cksums` (the old System V/POSIX `cksum`
+/// CRC, not a cryptographic hash at all) is the one real variant still
+/// not implemented — it's rare in practice and different enough in
+/// kind (a checksum, not a hash) to not fit this same `Digest`-based
+/// path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChecksumKind {
-    Sha256,
-    Sha512,
     Blake2b,
+    Sha512,
+    Sha384,
+    Sha256,
+    Sha224,
+    Sha1,
+    Md5,
 }
 
 fn digest_hex<D: Digest>(path: &Path) -> Result<String, VerifyError> {
@@ -71,9 +78,13 @@ fn digest_hex<D: Digest>(path: &Path) -> Result<String, VerifyError> {
 
 pub fn digest_hex_for(path: &Path, kind: ChecksumKind) -> Result<String, VerifyError> {
     match kind {
-        ChecksumKind::Sha256 => digest_hex::<Sha256>(path),
-        ChecksumKind::Sha512 => digest_hex::<Sha512>(path),
         ChecksumKind::Blake2b => digest_hex::<Blake2b512>(path),
+        ChecksumKind::Sha512 => digest_hex::<Sha512>(path),
+        ChecksumKind::Sha384 => digest_hex::<Sha384>(path),
+        ChecksumKind::Sha256 => digest_hex::<Sha256>(path),
+        ChecksumKind::Sha224 => digest_hex::<Sha224>(path),
+        ChecksumKind::Sha1 => digest_hex::<Sha1>(path),
+        ChecksumKind::Md5 => digest_hex::<Md5>(path),
     }
 }
 
@@ -140,6 +151,28 @@ mod tests {
         assert!(verify_source_checksum(&path, ChecksumKind::Sha512, sha512).unwrap());
         assert!(verify_source_checksum(&path, ChecksumKind::Blake2b, blake2b).unwrap());
         assert!(!verify_source_checksum(&path, ChecksumKind::Sha512, blake2b).unwrap());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn legacy_checksum_kinds_match_known_vectors() {
+        let dir = std::env::temp_dir().join(format!("archrs-test-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hello.txt");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"hello world\n")
+            .unwrap();
+        // md5sum/sha1sum/sha224sum/sha384sum of "hello world\n"
+        let md5 = "6f5902ac237024bdd0c176cb93063dc4";
+        let sha1 = "22596363b3de40b06f981fb85d82312e8c0ed511";
+        let sha224 = "95041dd60ab08c0bf5636d50be85fe9790300f39eb84602858a9b430";
+        let sha384 = "6b3b69ff0a404f28d75e98a066d3fc64fffd9940870cc68bece28545b9a75086b343d7a1366838083e4b8f3ca6fd3c80";
+        assert!(verify_source_checksum(&path, ChecksumKind::Md5, md5).unwrap());
+        assert!(verify_source_checksum(&path, ChecksumKind::Sha1, sha1).unwrap());
+        assert!(verify_source_checksum(&path, ChecksumKind::Sha224, sha224).unwrap());
+        assert!(verify_source_checksum(&path, ChecksumKind::Sha384, sha384).unwrap());
+        assert!(!verify_source_checksum(&path, ChecksumKind::Md5, sha1).unwrap());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

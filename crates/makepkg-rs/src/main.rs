@@ -21,13 +21,15 @@
 //!    `git_vcs_source`); anything else that's a URL downloads via
 //!    `ureq` (matching how `alpm-rs` already fetches real package
 //!    archives) and is verified against whichever of `b2sums`/
-//!    `sha512sums`/`sha256sums` the PKGBUILD defines
-//!    (`alpm_rs::verify::ChecksumKind`; `"SKIP"` entries skip
-//!    verification, same convention as real makepkg — but a remote
-//!    source with *no* recognized checksum at all is a hard error,
-//!    not a silent pass-through, see `prepare_sources`), then extracts
-//!    recognized archive formats (`.tar`/`.tar.gz`/`.tar.zst`/`.zip`)
-//!    into `src/`.
+//!    `sha512sums`/`sha384sums`/`sha256sums`/`sha224sums`/`sha1sums`/
+//!    `md5sums` the PKGBUILD defines (`alpm_rs::verify::ChecksumKind`
+//!    — every real makepkg checksum variant except `cksums`, a
+//!    non-cryptographic CRC different enough in kind to not fit this
+//!    path; `"SKIP"` entries skip verification, same convention as
+//!    real makepkg — but a remote source with *no* recognized
+//!    checksum at all is a hard error, not a silent pass-through, see
+//!    `prepare_sources`), then extracts recognized archive formats
+//!    (`.tar`/`.tar.gz`/`.tar.zst`/`.zip`) into `src/`.
 //! 3. If the PKGBUILD defines `pkgver()`, run it (with `$srcdir` as its
 //!    working directory) and use its output as the real package
 //!    version — the mechanism every VCS-sourced PKGBUILD needs, since
@@ -87,8 +89,15 @@
 //!   `epoch=1` (no epoch support existed either — the built package's
 //!   version would have silently omitted it, `20260801.r0.g5f8b701-1`
 //!   instead of the real `1:20260801.r0.g5f8b701-1`).
+//! - `fzy`: a real `md5sums` entry — with only `b2sums`/`sha512sums`/
+//!   `sha256sums` supported at the time, the refuse-if-unverified
+//!   hardening `tty-clock`'s `b2sums` gap led to would have made this
+//!   tool wrongly *refuse to build a legitimately checksummed
+//!   package* (the opposite failure mode from `tty-clock`'s silent
+//!   skip, but still a real gap: `md5sums` is old, but still real and
+//!   in active use).
 //!
-//! All five built, installed via `pacman-rs -U`, and ran/resolved
+//! All six built, installed via `pacman-rs -U`, and ran/resolved
 //! correctly afterward. `.install` execution itself (`pacman-rs`'s own
 //! side of this — see `alpm_rs::install::run_install_scriptlet`) was
 //! verified separately, in isolation, rather than against papirus'
@@ -98,14 +107,15 @@
 //! (`gtk-update-icon-cache`, etc.) would otherwise wrongly act on the
 //! real host instead of the fake root being tested against.
 //!
-//! Scope/known gaps: no PGP source verification, no `noextract`,
-//! `svn+`/`hg+`/`bzr+` VCS sources (real but rarer than git),
-//! `md5sums`/`sha1sums`/`sha224sums`/`sha384sums`/`cksums` (real but
-//! rare checksum variants — an entry using only one of these is
-//! treated as unverifiable, see above, same as having none at all),
-//! and the `declare -p` output parser handles the common case (quoted
-//! scalars and indexed arrays) rather than being a fully
-//! shell-quoting-aware parser.
+//! Scope/known gaps: no PGP source verification (`validpgpkeys`/
+//! `.sig` sources — `alpm_rs::verify::gpg_verify` already exists and
+//! is used for sync-db package signatures, just not wired up here
+//! yet), no `noextract`, `svn+`/`hg+`/`bzr+` VCS sources (real but
+//! rarer than git), `cksums` (a non-cryptographic CRC — every other
+//! real checksum variant is supported, see above), and the
+//! `declare -p` output parser handles the common case (quoted scalars
+//! and indexed arrays) rather than being a fully shell-quoting-aware
+//! parser.
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -131,9 +141,13 @@ const VARS: &[&str] = &[
     "provides",
     "conflicts",
     "source",
-    "sha256sums",
-    "sha512sums",
     "b2sums",
+    "sha512sums",
+    "sha384sums",
+    "sha256sums",
+    "sha224sums",
+    "sha1sums",
+    "md5sums",
     "install",
 ];
 
@@ -448,17 +462,20 @@ fn extract_archive(path: &Path, dest_dir: &Path) -> Result<bool> {
     Ok(true)
 }
 
-/// The `*sums=()` arrays this tool knows how to check, in the order
-/// real PKGBUILDs are checked against `alpm_rs::verify::ChecksumKind`
-/// — `b2sums` first (BLAKE2b-512, makepkg's own modern default),
-/// `sha512sums`, then `sha256sums`. Real makepkg additionally accepts
-/// `md5sums`/`sha1sums`/`sha224sums`/`sha384sums`/`cksums`, which
-/// aren't implemented (rare in practice); a PKGBUILD using only one of
-/// those is treated the same as having no checksum at all (see below).
+/// Every `*sums=()` array real makepkg supports except `cksums` (a
+/// non-cryptographic CRC, different enough in kind from the rest that
+/// it doesn't fit this `Digest`-based path — the one real variant
+/// still not implemented). Order is strongest/most-recommended first,
+/// matching `alpm_rs::verify::ChecksumKind`'s own ordering, though in
+/// practice a PKGBUILD almost always defines exactly one of these.
 const CHECKSUM_ARRAYS: &[(&str, alpm_rs::verify::ChecksumKind)] = &[
     ("b2sums", alpm_rs::verify::ChecksumKind::Blake2b),
     ("sha512sums", alpm_rs::verify::ChecksumKind::Sha512),
+    ("sha384sums", alpm_rs::verify::ChecksumKind::Sha384),
     ("sha256sums", alpm_rs::verify::ChecksumKind::Sha256),
+    ("sha224sums", alpm_rs::verify::ChecksumKind::Sha224),
+    ("sha1sums", alpm_rs::verify::ChecksumKind::Sha1),
+    ("md5sums", alpm_rs::verify::ChecksumKind::Md5),
 ];
 
 /// Downloads (or copies, for local files) and verifies each
@@ -519,8 +536,9 @@ fn prepare_sources(startdir: &Path, srcdir: &Path, pkgbuild: &PkgBuild) -> Resul
         }
         if is_remote && checks.is_empty() && !any_skip {
             anyhow::bail!(
-                "{filename}: no recognized checksum (b2sums/sha512sums/sha256sums) to verify \
-                 this remote source against — refusing to download and build unverified"
+                "{filename}: no recognized checksum (b2sums/sha512sums/sha384sums/sha256sums/\
+                 sha224sums/sha1sums/md5sums) to verify this remote source against — refusing \
+                 to download and build unverified"
             );
         }
 

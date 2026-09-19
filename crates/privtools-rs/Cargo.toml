@@ -1,0 +1,20 @@
+[package]
+name = "privtools-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "su"
+path = "src/bin/su.rs"
+
+[[bin]]
+name = "sudo"
+path = "src/bin/sudo.rs"
+
+[[bin]]
+name = "visudo"
+path = "src/bin/visudo.rs"
+
+[dependencies]
+sudo-rs = "0.2"

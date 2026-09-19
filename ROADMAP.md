@@ -1539,6 +1539,111 @@ This closes Phase 5's original closing-list item cleanly: the
 real, clean answer (vendor the ID-repository crates) rather than being
 a permanent gap.
 
+### Phase 8 — privilege-management tools (complete)
+Picks up Phase 5's other closing-boundary exclusion: `su`/`sudo`/
+`passwd` had been deliberately left out for "same reasoning as `crond`
+staying single-user" — this phase revisits that as a real scope
+decision (user: "everthing, we want this distributable at somepoint")
+rather than an oversight.
+
+- [x] **shadow-utils family** (`passwd`, `useradd`, `userdel`,
+      `usermod`, `chpasswd`, `chage`, `groupadd`, `groupdel`,
+      `groupmod`, `grpck`, `pwck`, `chfn`, `chsh`, `newgrp`) — vendors
+      the real `uutils/shadow-rs` project's individual `uu_*` crates
+      (same shape, same `uucore`/Fluent-locale machinery, same
+      `#[uucore::main]` macro as every coreutils `uu_*` crate already
+      vendored here), not a hand-rolled `/etc/passwd`·`shadow`·`group`
+      editor. Password hashing/verification goes through real
+      `crypt(3)` FFI (glibc/libxcrypt on this system, so real
+      `yescrypt` support — Arch's actual modern default, not just the
+      older `sha512crypt`), the same "delegate crypto to the real
+      system library" choice this project made all the way back in
+      Phase 1. Verified for real in the boot test: `useradd -m -s
+      /bin/sh testuser` creates a real account, `echo
+      testuser:secret123 | chpasswd` writes a real `$y$`-or-similar
+      hash into `/etc/shadow` (checked directly, not just exit code),
+      and that hash is what `su` (below) actually authenticates
+      against.
+      Not implemented: self-service (non-root) `passwd`/`chsh`/`chfn`
+      — real `passwd` is setuid-root specifically so an unprivileged
+      user can rewrite their own `/etc/shadow` line; this project's
+      `coreutils-rs` is deliberately never setuid (see `su`/`sudo`
+      below for exactly why), so these tools work as expected when
+      already root — this project's own realistic use case — but not
+      for a non-root user changing their own password. A real fix
+      would need its own small setuid-root binary, same shape as
+      `su`/`sudo`, not done yet.
+
+- [x] **`su`/`sudo`/`visudo`** — vendors
+      [`sudo-rs`](https://github.com/trifectatechfoundation/sudo-rs)
+      (Trifecta Tech Foundation's memory-safe reimplementation,
+      already the default `sudo`/`su` on real distros) rather than
+      hand-rolling privilege-escalation logic — by far the single
+      riskiest category of tool in this whole userland, and exactly
+      the kind of "stay cautious about reimplementing security-critical
+      logic" case this project's own established guidance calls out.
+      Real PAM authentication (`libpam.so` + real `pam_unix.so`/
+      `pam_rootok.so`/... modules, from Arch's real `pam` package) and
+      a real `/etc/sudoers` (Arch's real `sudo` package), not a custom
+      auth stack.
+      **Deliberately its own crate (`crates/privtools-rs`) with three
+      standalone binaries, not part of `coreutils-rs`'s multicall
+      dispatch** — confirmed for real that `sudo-rs` refuses to run
+      at all unless the *effective* uid is already 0 (either via a
+      real root parent process, or via the binary genuinely being
+      owned by root with the setuid bit set); folding that into the
+      ~150-utility multicall binary would mean either making the
+      entire binary setuid-root (turning every `ls`/`cat`/`grep`
+      parsing bug into a privilege-escalation bug) or trying to setuid
+      one symlink differently from another sharing the same inode,
+      which isn't how the setuid bit works. Real distros keep `sudo`/
+      `su` as small, separately-audited binaries for this exact
+      reason.
+      Verified for real in the boot test, and this surfaced one real
+      bug in `coreutils-rs` itself, unrelated to `sudo-rs`: `su -
+      testuser -c 'id -un'` exec's the target login shell with argv[0]
+      prefixed `-` (the standard login-shell convention, also used by
+      `login`/`sudo -i`), and `coreutils-rs`'s own symlink-name
+      dispatch wasn't stripping that prefix before matching against
+      `UTILS` — so `-sh` matched nothing, and the code fell through to
+      the *second* calling convention (`coreutils-rs <utility> args`),
+      which then misread the shell's own `-c` flag as a utility name
+      ("unknown utility '-c'"). Fixed by stripping a single leading
+      `-` before the `UTILS` lookup while still passing the real,
+      unmodified argv through to `brush_shell::entry::run()` (which
+      needs to see the real `-sh` itself to know it's a login shell).
+      After that fix, `su - testuser -c 'id -un'` genuinely
+      authenticates via PAM (root's `auth sufficient pam_rootok.so`
+      lets real root skip the password prompt, the same mechanism a
+      real distro relies on), switches uid/gid/groups for real, and
+      execs a real login shell as `testuser` — verified end to end,
+      not just an exit code.
+      `sudo` itself hit a real, structural wall instead: `sudo-rs`
+      additionally hardens by requiring `/etc` (and every ancestor of
+      `/etc/sudoers`) to be genuinely root-owned and not group/world-
+      writable, refusing otherwise ("sudo: invalid configuration: /etc
+      must be owned by root"). This boot test's image is built
+      entirely without host root (a deliberate project-wide design
+      choice — see the "Real boot test" section up top), so every
+      file on it, `/etc` included, is owned by the *host's* real uid,
+      never 0. This isn't a bug in either `sudo-rs` or this project's
+      own code — `sudo-rs` is correctly refusing to trust a directory
+      a non-root user could tamper with — so the boot test asserts
+      that exact refusal message instead of a successful run,
+      verifying the hardening logic fires for real. A working `sudo`
+      end-to-end needs the image-build pipeline to produce genuinely
+      root-owned files, which needs either real host root (the thing
+      this whole pipeline was built to avoid) or a `fakeroot`-wrapped
+      build step (a real, standard technique for this — real
+      distro/embedded build systems do exactly this — just not
+      implemented yet). Left open, same footing as `makepkg-rs`'s PGP
+      keyserver-import gap: a real, identified, deliberately deferred
+      piece of work, not an oversight.
+      Real setuid-root ownership on the installed `su`/`sudo`/`visudo`
+      binaries themselves has the identical root cause and identical
+      open status — `cp`'d into the image as the host's own uid, not
+      chowned to root, for the same "no host root available" reason.
+
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,
 most already upstream projects in their own languages) is not a software

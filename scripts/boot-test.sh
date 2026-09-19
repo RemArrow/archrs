@@ -40,7 +40,7 @@ if [ -z "$KERNEL" ] || [ ! -r "$KERNEL" ]; then
     exit 1
 fi
 
-for bin in coreutils-rs pacman-rs archrs-init crond crontab; do
+for bin in coreutils-rs pacman-rs archrs-init crond crontab su sudo visudo; do
     if [ ! -x "$TARGET/$bin" ]; then
         echo "boot-test: $TARGET/$bin missing — run 'cargo build --release' first" >&2
         exit 1
@@ -50,9 +50,20 @@ done
 mkdir -p "$ROOTFS"
 
 if [ ! -f "$ROOTFS/.base-installed" ]; then
-    echo "boot-test: installing base system into $ROOTFS (glibc, filesystem, bash, xz, file)..."
+    # pam/sudo/shadow/util-linux pulled in purely for what this project
+    # doesn't reimplement: libpam.so + its real pam_unix/pam_rootok/...
+    # modules, and the real /etc/pam.d/{su,sudo,system-auth}, /etc/sudoers,
+    # /etc/login.defs config files (Arch's `shadow` package ships no su/
+    # login at all — those come from util-linux, which is also the only
+    # source of /etc/pam.d/su's `auth sufficient pam_rootok.so` line, the
+    # real mechanism that lets root su/sudo without a password). Every
+    # binary any of these four packages ship gets immediately overwritten
+    # below by this project's own coreutils-rs/privtools-rs equivalents
+    # where one exists — only the supporting files are actually used from
+    # them, same pattern as glibc/filesystem/bash/xz/file already below.
+    echo "boot-test: installing base system into $ROOTFS (glibc, filesystem, bash, xz, file, pam, sudo, shadow, util-linux)..."
     "$TARGET/pacman-rs" -Sy --root "$ROOTFS"
-    "$TARGET/pacman-rs" -S glibc filesystem bash xz file --root "$ROOTFS"
+    "$TARGET/pacman-rs" -S glibc filesystem bash xz file pam sudo shadow util-linux --root "$ROOTFS"
     touch "$ROOTFS/.base-installed"
 fi
 
@@ -63,6 +74,22 @@ for bin in coreutils-rs pacman-rs makepkg-rs archrs-init crond crontab; do
 done
 rm -f "$ROOTFS/sbin/init.archrs"
 cp "$TARGET/archrs-init" "$ROOTFS/sbin/init.archrs"
+
+# su/sudo/visudo: real standalone setuid-root binaries in real distros —
+# deliberately NOT symlinked through coreutils-rs's multicall dispatch
+# (see crates/privtools-rs's doc comment). Installed straight to /usr/bin,
+# overwriting the real util-linux/sudo package's own binaries but keeping
+# their PAM/sudoers config files. Actual setuid-root ownership can't be
+# set here (this whole image build deliberately runs without host root,
+# so every file lands owned by the host's own uid, not 0) — not needed for
+# what this test verifies, since every process in the booted VM already
+# runs as genuine root; a real non-root user gaining privileges through
+# these binaries on a real install still needs a real `chown root:root` +
+# `chmod u+s` step outside this pipeline, left open like the rest of
+# "distributable" packaging.
+for bin in su sudo visudo; do
+    cp "$TARGET/$bin" "$ROOTFS/usr/bin/$bin"
+done
 
 # Symlink every utility coreutils-rs dispatches, straight from its own
 # source of truth, so this list can never drift out of sync with it.
@@ -107,6 +134,23 @@ lsblk | tr '\n' '|'
 echo
 echo "ARCHRS-BOOT-TEST: lspci exit code: $(lspci >/dev/null 2>&1; echo $?)"
 echo "ARCHRS-BOOT-TEST: lsusb exit code: $(lsusb >/dev/null 2>&1; echo $?)"
+useradd -m -s /bin/sh testuser
+echo "ARCHRS-BOOT-TEST: useradd exit code: $?"
+echo "testuser:secret123" | chpasswd
+echo "ARCHRS-BOOT-TEST: chpasswd exit code: $?"
+echo "ARCHRS-BOOT-TEST: shadow hash: $(grep -c '^testuser:\$' /etc/shadow)"
+echo "ARCHRS-BOOT-TEST: su result: $(su - testuser -c 'id -un')"
+# sudo-rs hardens further than su-rs: it also demands /etc (and every
+# ancestor of /etc/sudoers) be genuinely root-owned, not just its own
+# binary. This image is built entirely without host root (see the
+# install step's comment), so every file — including /etc itself —
+# is owned by the host's real uid, not 0; sudo-rs correctly detects
+# and refuses this rather than trusting a directory a non-root user
+# could tamper with. Checking for that exact refusal message verifies
+# the hardening logic fires for real, which is what's actually
+# reachable here; sudo's full functional path needs a real- or
+# fake-rooted image build, deliberately not done yet (see ROADMAP.md).
+echo "ARCHRS-BOOT-TEST: sudo refusal: $(sudo -u testuser id -un 2>&1)"
 echo "ARCHRS-BOOT-TEST: all checks complete, powering off"
 kill -USR2 1
 sleep 5
@@ -166,6 +210,11 @@ check "vda         254:0"
 check "1G 0  disk /|"
 check "ARCHRS-BOOT-TEST: lspci exit code: 0"
 check "ARCHRS-BOOT-TEST: lsusb exit code: 0"
+check "ARCHRS-BOOT-TEST: useradd exit code: 0"
+check "ARCHRS-BOOT-TEST: chpasswd exit code: 0"
+check "ARCHRS-BOOT-TEST: shadow hash: 1"
+check "ARCHRS-BOOT-TEST: su result: testuser"
+check "ARCHRS-BOOT-TEST: sudo refusal: sudo: invalid configuration: /etc must be owned by root"
 check "archrs-init: powering off"
 check "reboot: Power down"
 

@@ -12,6 +12,63 @@ long-horizon project, tracked in phases below.
   We build against glibc/musl as a libc, same as any other Rust program on
   Linux; we don't reimplement libc itself.
 
+## Real boot test (2026-09-18)
+
+Every phase below was, until this point, verified component-by-component:
+each tool checked against the real thing it replaces, in isolation, invoked
+directly on the host. That leaves a real, distinct question unanswered: do
+the pieces actually work *together*, assembled into a system, with
+`archrs-init` as *genuine* PID 1 under a real kernel with real privileges —
+not just inside an unprivileged `unshare` namespace, where mounting
+`/proc`/`/sys`/`/dev` and the `reboot(2)` syscall had both returned EPERM
+(documented as an unverified sandbox limitation in Phase 3's own section).
+
+Closed that gap with an actual QEMU boot, entirely without host root
+(no `sudo`, no loop-mount): `pacman-rs -S` installed a real minimal base
+system (`glibc`, `filesystem`, `bash`, plus `xz`/`file` for `coreutils-rs`'s
+own runtime library needs) into a sandboxed root against real Manjaro
+mirrors; `mke2fs -d <dir>` (populates an ext4 image directly from a host
+directory, no mount required) turned that into a bootable disk image;
+`archrs-init` replaced the real `bash`/coreutils with `coreutils-rs`
+(symlinked for all ~117 utilities it dispatches) as `/sbin/init.archrs`;
+QEMU booted the *host's own kernel* (`-kernel /boot/vmlinuz-...`) against
+that disk image over virtio-blk, with serial console output.
+
+Confirmed, for real, everything the sandbox couldn't show:
+- `archrs-init` mounted `/proc` and `/sys` for real, as genuine PID 1 with
+  genuine root — the exact operation that returned EPERM under `unshare`.
+  `/dev` returned `EBUSY` instead of succeeding, because this kernel
+  auto-mounts `devtmpfs` on `/dev` before init even runs — a real boot
+  behavior the unprivileged test had no way to surface, since it never got
+  past its own EPERM. Fixed by treating `EBUSY` here as "already mounted,
+  fine" instead of printing a spurious error — a real bug caught only by
+  booting for real, not something inferable from the sandbox test alone.
+- `coreutils-rs`'s `bash` (brush) ran a real, non-trivial shell script as
+  the actual init-spawned session: command substitution, arithmetic
+  (`$((6*7))`), file I/O, calling into other `coreutils-rs`-dispatched
+  utilities (`awk`, `ps`, `free`, `cat`, `kill`) — as PID 1's actual child,
+  not a synthetic standalone invocation.
+- `ps aux` (this project's own `procfs`-based implementation) correctly
+  listed the *real* process tree a genuine kernel boot produces — every
+  kernel thread (`kthreadd`, `kworker/*`, `ksoftirqd`, `rcu_preempt`, etc.),
+  not just the handful of processes an `unshare` sandbox has.
+  `free`/`awk` output was equally correct against real boot-time data.
+- SIGUSR2 sent to the real PID 1 (`kill -USR2 1` from inside the running
+  script) correctly triggered the shutdown sequence *and the real
+  `reboot(2)` syscall itself succeeded* — the kernel's own log confirms it
+  (`reboot: Power down`) — closing the other EPERM gap from the `unshare`
+  test, where reboot(2) never actually completed.
+
+This is real evidence archrs can be a system's actual boot init and
+userland, not just a set of individually-correct binaries — but it's one
+boot of one minimal script-driven session, not a general "it's production
+ready" claim. Still open, deliberately not addressed by this test: real
+multi-user service management (archrs-init's config format is not
+systemd-unit-compatible — a permanent architectural difference, not a gap
+to close), `makepkg-rs` against a real-world AUR/official PKGBUILD (only
+synthetic test PKGBUILDs have been tried), and anything above the base
+userland (device management, networking daemons, a display stack).
+
 ## Phases
 
 ### Phase 1 — `alpm-rs` / `pacman-rs` (functionally complete)
@@ -270,14 +327,14 @@ for real installs.
       orphan-reaping behavior that's the whole reason PID-1 code differs
       from ordinary process supervision. Also confirmed SIGTERM-triggered
       shutdown tears everything down and exits cleanly.
-      Known gap: mounting `/proc`/`/sys`/`/dev` itself couldn't be
-      verified in this environment — the sandboxed dev container's user
-      namespace returned EPERM for all three (likely a seccomp/LSM
-      restriction on the outer container, not a kernel limitation of
-      unprivileged user namespaces in general). The mount calls
-      themselves use the same flags and MS_PRIVATE-first sequencing real
-      init systems and container runtimes use, but this needs a real
-      boot or a more permissive sandbox to confirm.
+      Update: mounting `/proc`/`/sys`/`/dev` — unverifiable under
+      `unshare` (EPERM for all three there) — was subsequently confirmed
+      for real under an actual QEMU boot with `archrs-init` as genuine
+      PID 1; see "Real boot test" above. `/proc` and `/sys` mounted
+      cleanly; `/dev` returned `EBUSY` because this kernel auto-mounts
+      `devtmpfs` there before init runs, which the code now treats as
+      success rather than printing a spurious error (a real, if minor,
+      bug the `unshare` test had no way to surface).
 - [x] Service ordering, restart policies, and reboot/poweroff. Service
       list lines take an optional prefix: `wait <cmd>` blocks until it
       exits before moving to the next line (the ordering primitive —
@@ -297,16 +354,15 @@ for real installs.
       begins. Verified SIGUSR1/SIGUSR2 for real too: both correctly run
       the shutdown sequence, then attempt the actual `reboot(2)` syscall
       with the right mode flag, observed via a backgrounded `unshare` +
-      `pgrep`/`kill` from outside the namespace. `reboot(2)` itself
-      returned EPERM in this sandbox (it needs `CAP_SYS_BOOT`, which
-      this environment's user namespaces don't grant — same class of
-      restriction as the mount EPERMs above, not a bug in the calls
-      themselves), so the specific namespace-termination-by-signal
-      behavior reboot(2) is documented to have (the parent's `wait()`
-      seeing the child die by SIGHUP for restart / SIGINT for power off)
-      is unverified here; what's confirmed is that the syscall is
-      attempted correctly and failure is handled gracefully rather than
-      hanging or panicking.
+      `pgrep`/`kill` from outside the namespace. Under `unshare`,
+      `reboot(2)` itself returned EPERM (needs `CAP_SYS_BOOT`, which
+      that environment's user namespaces don't grant), so only the
+      syscall attempt and graceful-failure handling were confirmed
+      there. Update: subsequently verified for real under an actual
+      QEMU boot — `SIGUSR2` sent to the genuine PID 1 triggered
+      `reboot(RB_POWER_OFF)`, and it *succeeded*: the kernel's own log
+      shows `reboot: Power down` immediately after. See "Real boot
+      test" above.
       Known minor gap: the shutdown-flag check and `waitpid` in the reap
       loop aren't atomic with each other, so a `respawn` service can in
       principle be restarted once more in the narrow window between a

@@ -125,6 +125,14 @@ fn mount_pseudo_filesystems() {
     for (fstype, target, flags) in targets {
         match mount(Some(*fstype), *target, Some(*fstype), *flags, None::<&str>) {
             Ok(()) => println!("archrs-init: mounted {fstype} on {target}"),
+            // EBUSY here means the kernel already auto-mounted this
+            // itself before init ran (verified against a real boot:
+            // devtmpfs on /dev is commonly kernel-automounted when
+            // CONFIG_DEVTMPFS_MOUNT is set) — not a real failure, our
+            // own mount would've served the same purpose anyway.
+            Err(Errno::EBUSY) => {
+                println!("archrs-init: {target} already mounted (kernel auto-mount), skipping");
+            }
             Err(e) => eprintln!("archrs-init: could not mount {fstype} on {target}: {e}"),
         }
     }

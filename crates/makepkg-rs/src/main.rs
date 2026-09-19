@@ -15,38 +15,74 @@
 //! 1. Source the PKGBUILD in a throwaway bash invocation and extract its
 //!    variables via `declare -p` (and its function names via
 //!    `declare -F`) — see `read_pkgbuild`.
-//! 2. Download each `source=()` entry that's a URL (`ureq`, matching
-//!    how `alpm-rs` already fetches real package archives), verify it
-//!    against whichever of `b2sums`/`sha512sums`/`sha256sums` the
-//!    PKGBUILD defines (`alpm_rs::verify::ChecksumKind`; `"SKIP"`
-//!    entries skip verification, same convention as real makepkg —
-//!    but a remote source with *no* recognized checksum at all is a
-//!    hard error, not a silent pass-through, see `prepare_sources`),
-//!    and extract recognized archive formats
-//!    (`.tar`/`.tar.gz`/`.tar.zst`/`.zip`) into `src/`.
-//! 3. Run `prepare`/`build`/`check` (whichever are defined) with `src/`
-//!    as the working directory and the usual PKGBUILD env vars set.
-//! 4. Run `package()` with `pkg/` as `$pkgdir`, under fakeroot (the
-//!    `pseudoroot` crate — a real Rust fakeroot via `LD_PRELOAD`
-//!    library interposition) so ownership/permission calls in
-//!    `package()` succeed without needing real root, same as real
-//!    makepkg. `prepare`/`build`/`check` run as the invoking user.
-//! 5. Tar+zstd `pkg/`'s contents into `<name>-<ver>-<rel>-<arch>.pkg.tar.zst`,
-//!    with a real `.PKGINFO` member (`alpm_rs::package::write_pkginfo`).
+//! 2. Fetch each `source=()` entry: a VCS URL (`git+<url>`, or a bare
+//!    `git://` some upstream PKGBUILDs use directly) clones via the
+//!    real `git` binary into `$srcdir/<reponame>` (see
+//!    `git_vcs_source`); anything else that's a URL downloads via
+//!    `ureq` (matching how `alpm-rs` already fetches real package
+//!    archives) and is verified against whichever of `b2sums`/
+//!    `sha512sums`/`sha256sums` the PKGBUILD defines
+//!    (`alpm_rs::verify::ChecksumKind`; `"SKIP"` entries skip
+//!    verification, same convention as real makepkg — but a remote
+//!    source with *no* recognized checksum at all is a hard error,
+//!    not a silent pass-through, see `prepare_sources`), then extracts
+//!    recognized archive formats (`.tar`/`.tar.gz`/`.tar.zst`/`.zip`)
+//!    into `src/`.
+//! 3. If the PKGBUILD defines `pkgver()`, run it (with `$srcdir` as its
+//!    working directory) and use its output as the real package
+//!    version — the mechanism every VCS-sourced PKGBUILD needs, since
+//!    its real version (`git describe`, etc.) can't be known before
+//!    checkout. See `run_pkgver`.
+//! 4. Run `prepare`/`build`/`check` (whichever are defined) with `src/`
+//!    as the working directory and the usual PKGBUILD env vars set —
+//!    once, regardless of split packaging (see below), matching real
+//!    makepkg.
+//! 5. Run `package()` (or, for a split PKGBUILD — `pkgname=()` with
+//!    more than one entry — each `package_<name>()` into its own
+//!    `pkg-<name>/` directory, one output archive per name, with
+//!    per-sub-package `pkgdesc`/`depends`/etc. overrides captured the
+//!    same way real makepkg does: read back those variables' final
+//!    values right after the function runs, in the same bash
+//!    invocation — see `run_package_and_capture_metadata`) under
+//!    fakeroot (the `pseudoroot` crate — a real Rust fakeroot via
+//!    `LD_PRELOAD` library interposition) so ownership/permission
+//!    calls succeed without needing real root, same as real makepkg.
+//!    `prepare`/`build`/`check` run as the invoking user.
+//! 6. Tar+zstd each pkgdir's contents into
+//!    `<name>-<ver>-<rel>-<arch>.pkg.tar.zst`, with a real `.PKGINFO`
+//!    member (`alpm_rs::package::write_pkginfo`), correctly typing
+//!    symlinks as symlinks rather than following them (`walk_all`/
+//!    `write_root_owned_entry` — a real bug caught by testing against
+//!    a real package that creates one, see below).
 //!
-//! Hardened against two real AUR packages, not just synthetic test
-//! PKGBUILDs (see ROADMAP.md's "Hardened against real AUR packages"
-//! section for the full story): `tty-clock` (real `prepare()`/
-//! `build()`, local auxiliary source files, `b2sums` — which the
-//! checksum handling above didn't originally support at all, a real
-//! caught-by-testing security gap, not a hypothetical one) and
-//! `cbonsai` (a GitLab `.zip` source, compiling inside `package()`
-//! with no separate `build()`). Both built, installed via
-//! `pacman-rs -U`, and ran successfully.
+//! Hardened against real AUR packages throughout, not just synthetic
+//! test PKGBUILDs — see ROADMAP.md's "Hardened against real AUR
+//! packages" section for the full story of each one:
+//! - `tty-clock`: real `prepare()`/`build()`, local auxiliary source
+//!   files, `b2sums` (which checksum verification didn't originally
+//!   support at all — a real, caught-by-testing security gap, not a
+//!   hypothetical one).
+//! - `cbonsai`: a GitLab `.zip` source (unsupported at the time),
+//!   compiling inside `package()` with no separate `build()`.
+//! - `dmenu-git`: a real `git+https://` VCS source and `pkgver()`
+//!   (no VCS handling existed at all before this); computed a real
+//!   current version from a live `git describe`, differing from the
+//!   AUR PKGBUILD's own stale placeholder, proving it wasn't just
+//!   echoing a static value.
+//! - `ttf-readex-pro`: a real split package (`pkgname=('a' 'b')`,
+//!   two `package_<name>()` functions) that also creates a real
+//!   symlink via `ln -s` — caught the walk/write bug above (a
+//!   symlink was misclassified as a plain file, since checking
+//!   `is_dir()`/`is_file()` *follows* symlinks; the written tar entry
+//!   then had a header size of 0 [from the symlink's own `lstat`]
+//!   but streamed the *target* file's full content [since opening a
+//!   symlink path follows it], corrupting the archive).
+//! All four built, installed via `pacman-rs -U`, and ran/resolved
+//! correctly afterward.
 //!
-//! Scope/known gaps: single-package PKGBUILDs only (no `pkgname=()`
-//! split packages), no `.install` scriptlets, no PGP source
-//! verification, no `noextract`, `md5sums`/`sha1sums`/`sha224sums`/
+//! Scope/known gaps: no `.install` scriptlets, no PGP source
+//! verification, no `noextract`, `svn+`/`hg+`/`bzr+` VCS sources
+//! (real but rarer than git), `md5sums`/`sha1sums`/`sha224sums`/
 //! `sha384sums`/`cksums` (real but rare checksum variants — an entry
 //! using only one of these is treated as unverifiable, see above,
 //! same as having none at all), and the `declare -p` output parser
@@ -518,8 +554,9 @@ fn run_pkgbuild_function(
     // Real makepkg runs only the packaging step under fakeroot, so
     // ownership/permission calls in package() (chown root:root, etc.)
     // succeed without actually needing root — prepare/build/check run
-    // as the invoking user, same as real makepkg.
-    let output = if func == "package" {
+    // as the invoking user, same as real makepkg. `package_<name>` is
+    // the split-package equivalent of plain `package`, same treatment.
+    let output = if func == "package" || func.starts_with("package_") {
         cmd.fakeroot().output()
     } else {
         cmd.output()
@@ -531,6 +568,63 @@ fn run_pkgbuild_function(
         anyhow::bail!("{func}() failed");
     }
     Ok(())
+}
+
+/// The metadata fields a split package's own `package_<name>()`
+/// function commonly overrides (`pkgdesc+=`, `depends=`, etc.) —
+/// real makepkg's own mechanism for this is exactly what
+/// `run_package_and_capture_metadata` below replicates: source the
+/// PKGBUILD, run the function, then read back whatever these
+/// variables ended up holding afterward. A sub-package that doesn't
+/// touch a given variable simply reads back the same global value the
+/// top-level PKGBUILD already set, so this needs no separate
+/// "was it actually overridden" tracking.
+const SPLIT_METADATA_VARS: &[&str] = &[
+    "pkgdesc",
+    "url",
+    "license",
+    "depends",
+    "provides",
+    "conflicts",
+];
+
+/// Runs a split package's `package_<name>()` function under fakeroot
+/// (same as plain `package()`) and, in the same bash invocation,
+/// reads back `SPLIT_METADATA_VARS`' final values afterward — the
+/// same technique real makepkg uses to support per-sub-package
+/// `pkgdesc`/`depends`/etc. overrides.
+fn run_package_and_capture_metadata(
+    startdir: &Path,
+    srcdir: &Path,
+    pkgdir: &Path,
+    func: &str,
+) -> Result<HashMap<String, Vec<String>>> {
+    println!("makepkg-rs: running {func}()...");
+    let var_list = SPLIT_METADATA_VARS.join(" ");
+    let script = format!(
+        "source ./PKGBUILD 2>/dev/null; cd \"$srcdir\" && {func}; __rc=$?; \
+         echo '---PKGVARS---'; declare -p {var_list} 2>/dev/null; exit $__rc"
+    );
+    let carch = std::env::consts::ARCH;
+    let output = bash_command()
+        .arg("-c")
+        .arg(&script)
+        .current_dir(startdir)
+        .env("srcdir", srcdir)
+        .env("pkgdir", pkgdir)
+        .env("startdir", startdir)
+        .env("CARCH", carch)
+        .fakeroot()
+        .output()
+        .with_context(|| format!("running {func}()"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let (before, vars_part) = stdout.split_once("---PKGVARS---").unwrap_or((&stdout, ""));
+    print!("{before}");
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    if !output.status.success() {
+        anyhow::bail!("{func}() failed");
+    }
+    Ok(parse_declare_p(vars_part))
 }
 
 /// Runs a PKGBUILD's `pkgver()` function, if defined, and returns the
@@ -569,13 +663,28 @@ fn run_pkgver(startdir: &Path, srcdir: &Path, pkgbuild: &PkgBuild) -> Result<Opt
 }
 
 /// Every entry `package_archive` writes for `pkgdir`'s own contents,
-/// separated from `write_header_forcing_root` so both directories and
-/// files can share the same "force root ownership" header logic.
+/// separated from `write_header_forcing_root` so directories, files,
+/// and symlinks can share the same "force root ownership" header
+/// logic.
 enum Entry {
     Dir(PathBuf),
     File(PathBuf),
+    Symlink(PathBuf),
 }
 
+/// Symlinks are real and common in real packages — a real bug caught
+/// by testing against `ttf-readex-pro` (a real split AUR package that
+/// `ln -s`'s a shared fontconfig file into place): checking
+/// `path.is_dir()`/implicitly-else-file (as this used to) *follows*
+/// the symlink to classify it, misfiling it as a plain `File`. Writing
+/// that "file" then read the symlink's *target* content via a
+/// link-following `File::open`, while its tar header still carried
+/// the symlink's own `lstat` size (0 bytes, from `symlink_metadata`)
+/// — a header/content-length mismatch that corrupted the archive
+/// (`tar: Skipping to next header` on extraction; confirmed this was
+/// the actual cause by reproducing without the fix). `symlink_metadata`
+/// (`lstat`, not `stat`) must be checked *before* `is_dir()`/`is_file()`
+/// to classify correctly.
 fn walk_all(dir: &Path) -> Result<Vec<Entry>> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
@@ -586,7 +695,10 @@ fn walk_all(dir: &Path) -> Result<Vec<Entry>> {
             .collect();
         children.sort();
         for path in children {
-            if path.is_dir() {
+            let meta = fs::symlink_metadata(&path)?;
+            if meta.is_symlink() {
+                out.push(Entry::Symlink(path));
+            } else if meta.is_dir() {
                 out.push(Entry::Dir(path.clone()));
                 stack.push(path);
             } else {
@@ -621,9 +733,8 @@ fn write_root_owned_entry<W: Write>(
     entry: &Entry,
     pkgdir: &Path,
 ) -> Result<()> {
-    let (path, is_dir) = match entry {
-        Entry::Dir(p) => (p, true),
-        Entry::File(p) => (p, false),
+    let path = match entry {
+        Entry::Dir(p) | Entry::File(p) | Entry::Symlink(p) => p,
     };
     let rel = path.strip_prefix(pkgdir)?;
     let metadata = fs::symlink_metadata(path)?;
@@ -635,16 +746,25 @@ fn write_root_owned_entry<W: Write>(
     header.set_username("root").ok();
     header.set_groupname("root").ok();
 
-    if is_dir {
-        header.set_entry_type(tar::EntryType::Directory);
-        header.set_size(0);
-        header.set_cksum();
-        builder.append_data(&mut header, rel, std::io::empty())?;
-    } else {
-        header.set_entry_type(tar::EntryType::Regular);
-        header.set_cksum();
-        let mut file = File::open(path)?;
-        builder.append_data(&mut header, rel, &mut file)?;
+    match entry {
+        Entry::Dir(_) => {
+            header.set_entry_type(tar::EntryType::Directory);
+            header.set_size(0);
+            header.set_cksum();
+            builder.append_data(&mut header, rel, std::io::empty())?;
+        }
+        Entry::File(_) => {
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_cksum();
+            let mut file = File::open(path)?;
+            builder.append_data(&mut header, rel, &mut file)?;
+        }
+        Entry::Symlink(_) => {
+            let target = fs::read_link(path)?;
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_size(0);
+            builder.append_link(&mut header, rel, &target)?;
+        }
     }
     Ok(())
 }
@@ -659,7 +779,7 @@ fn package_archive(pkgdir: &Path, pkg: &Package, out_path: &Path) -> Result<u64>
         .iter()
         .filter_map(|e| match e {
             Entry::File(p) => p.metadata().ok().map(|m| m.len()),
-            Entry::Dir(_) => None,
+            Entry::Dir(_) | Entry::Symlink(_) => None,
         })
         .sum();
 
@@ -687,6 +807,46 @@ fn now() -> i64 {
         .unwrap_or(0)
 }
 
+/// Builds a `Package` for one output archive, falling back to the
+/// top-level PKGBUILD's own global arrays for any field a split
+/// package's `overrides` map didn't touch (or, for a non-split build,
+/// where `overrides` is simply empty and every field falls back).
+fn build_package_meta(
+    name: &str,
+    base: &str,
+    version: &str,
+    carch: &str,
+    pkgbuild: &PkgBuild,
+    overrides: &HashMap<String, Vec<String>>,
+) -> Package {
+    let field = |key: &str| -> Vec<String> {
+        overrides
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| pkgbuild.array(key).to_vec())
+    };
+    let scalar_field = |key: &str| -> Option<String> {
+        overrides
+            .get(key)
+            .and_then(|v| v.first().cloned())
+            .or_else(|| pkgbuild.scalar(key).map(str::to_string))
+    };
+    Package {
+        name: name.to_string(),
+        version: version.to_string(),
+        base: Some(base.to_string()),
+        description: scalar_field("pkgdesc"),
+        url: scalar_field("url"),
+        arch: Some(carch.to_string()),
+        licenses: field("license"),
+        depends: field("depends"),
+        makedepends: pkgbuild.array("makedepends").to_vec(),
+        provides: field("provides"),
+        conflicts: field("conflicts"),
+        ..Package::default()
+    }
+}
+
 fn run() -> Result<()> {
     let startdir = std::env::current_dir()?;
     if !startdir.join("PKGBUILD").is_file() {
@@ -694,10 +854,10 @@ fn run() -> Result<()> {
     }
 
     let pkgbuild = read_pkgbuild(&startdir).context("reading PKGBUILD")?;
-    let name = pkgbuild
-        .scalar("pkgname")
-        .context("PKGBUILD has no pkgname")?
-        .to_string();
+    let pkgnames = pkgbuild.array("pkgname").to_vec();
+    if pkgnames.is_empty() {
+        anyhow::bail!("PKGBUILD has no pkgname");
+    }
     let mut ver = pkgbuild
         .scalar("pkgver")
         .context("PKGBUILD has no pkgver")?
@@ -707,13 +867,27 @@ fn run() -> Result<()> {
         .context("PKGBUILD has no pkgrel")?
         .to_string();
     let carch = std::env::consts::ARCH.to_string();
+    let base = pkgbuild
+        .scalar("pkgbase")
+        .map(str::to_string)
+        .unwrap_or_else(|| pkgnames[0].clone());
 
-    println!("makepkg-rs: building {name} {ver}-{rel}");
+    if pkgnames.len() > 1 {
+        println!(
+            "makepkg-rs: building {base} {ver}-{rel} (split: {})",
+            pkgnames.join(", ")
+        );
+    } else {
+        println!("makepkg-rs: building {base} {ver}-{rel}");
+    }
 
     let srcdir = startdir.join("src");
-    let pkgdir = startdir.join("pkg");
-    fs::remove_dir_all(&pkgdir).ok();
-    fs::create_dir_all(&pkgdir)?;
+    // A shared scratch pkgdir for prepare/build/check, which real
+    // makepkg also runs once regardless of split packaging — only
+    // package_<name>() (or plain package()) gets its own pkgdir.
+    let shared_pkgdir = startdir.join("pkg");
+    fs::remove_dir_all(&shared_pkgdir).ok();
+    fs::create_dir_all(&shared_pkgdir)?;
 
     prepare_sources(&startdir, &srcdir, &pkgbuild)?;
     if let Some(computed) = run_pkgver(&startdir, &srcdir, &pkgbuild)? {
@@ -722,34 +896,46 @@ fn run() -> Result<()> {
         }
         ver = computed;
     }
-    run_pkgbuild_function(&startdir, &srcdir, &pkgdir, &pkgbuild, "prepare")?;
-    run_pkgbuild_function(&startdir, &srcdir, &pkgdir, &pkgbuild, "build")?;
-    run_pkgbuild_function(&startdir, &srcdir, &pkgdir, &pkgbuild, "check")?;
-    run_pkgbuild_function(&startdir, &srcdir, &pkgdir, &pkgbuild, "package")?;
+    run_pkgbuild_function(&startdir, &srcdir, &shared_pkgdir, &pkgbuild, "prepare")?;
+    run_pkgbuild_function(&startdir, &srcdir, &shared_pkgdir, &pkgbuild, "build")?;
+    run_pkgbuild_function(&startdir, &srcdir, &shared_pkgdir, &pkgbuild, "check")?;
 
-    let pkg = Package {
-        name: name.clone(),
-        version: format!("{ver}-{rel}"),
-        base: pkgbuild
-            .scalar("pkgbase")
-            .map(str::to_string)
-            .or_else(|| Some(name.clone())),
-        description: pkgbuild.scalar("pkgdesc").map(str::to_string),
-        url: pkgbuild.scalar("url").map(str::to_string),
-        arch: Some(carch.clone()),
-        licenses: pkgbuild.array("license").to_vec(),
-        depends: pkgbuild.array("depends").to_vec(),
-        makedepends: pkgbuild.array("makedepends").to_vec(),
-        provides: pkgbuild.array("provides").to_vec(),
-        conflicts: pkgbuild.array("conflicts").to_vec(),
-        ..Package::default()
-    };
+    let version = format!("{ver}-{rel}");
 
-    let out_name = format!("{name}-{ver}-{rel}-{carch}.pkg.tar.zst");
-    let out_path = startdir.join(&out_name);
-    let size = package_archive(&pkgdir, &pkg, &out_path)?;
+    if pkgnames.len() == 1 {
+        let name = &pkgnames[0];
+        run_pkgbuild_function(&startdir, &srcdir, &shared_pkgdir, &pkgbuild, "package")?;
+        let pkg = build_package_meta(name, &base, &version, &carch, &pkgbuild, &HashMap::new());
+        let out_name = format!("{name}-{version}-{carch}.pkg.tar.zst");
+        let out_path = startdir.join(&out_name);
+        let size = package_archive(&shared_pkgdir, &pkg, &out_path)?;
+        println!("makepkg-rs: built {out_name} ({size} bytes uncompressed)");
+        return Ok(());
+    }
 
-    println!("makepkg-rs: built {out_name} ({size} bytes uncompressed)");
+    // Split package: each pkgname needs its own package_<name>()
+    // function and its own pkgdir/output archive, matching real
+    // makepkg. pkgbase is required here the same way real makepkg
+    // requires it whenever pkgname is an array.
+    if pkgbuild.scalar("pkgbase").is_none() {
+        anyhow::bail!("split PKGBUILD (multiple pkgname entries) has no pkgbase");
+    }
+    for name in &pkgnames {
+        let func = format!("package_{name}");
+        if !pkgbuild.has_fn(&func) {
+            anyhow::bail!("split PKGBUILD has no {func}() for pkgname '{name}'");
+        }
+        let sub_pkgdir = startdir.join(format!("pkg-{name}"));
+        fs::remove_dir_all(&sub_pkgdir).ok();
+        fs::create_dir_all(&sub_pkgdir)?;
+
+        let overrides = run_package_and_capture_metadata(&startdir, &srcdir, &sub_pkgdir, &func)?;
+        let pkg = build_package_meta(name, &base, &version, &carch, &pkgbuild, &overrides);
+        let out_name = format!("{name}-{version}-{carch}.pkg.tar.zst");
+        let out_path = startdir.join(&out_name);
+        let size = package_archive(&sub_pkgdir, &pkg, &out_path)?;
+        println!("makepkg-rs: built {out_name} ({size} bytes uncompressed)");
+    }
     Ok(())
 }
 

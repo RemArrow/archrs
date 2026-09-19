@@ -605,6 +605,57 @@ dependency and is otherwise a clean, representative example (real
       Not implemented: `svn+`/`hg+`/`bzr+` sources (real but rarer than
       git in practice), `noextract`, VCS-source-specific `makedepends`
       auto-detection.
+
+**Extended to real split packages, and caught a real symlink-handling
+bug (2026-09-19).** `pkgname=()` split packages (one PKGBUILD, several
+output `.pkg.tar.zst` archives, each via its own `package_<name>()`)
+are common for font families, plugin suites, and anything shipping a
+runtime + headers/docs as separate installable units — a real,
+documented gap until now. Found a real split-package AUR example by
+downloading AUR's own package metadata dump and grouping by
+`PackageBase` (`font-symbola` looked ideal but needs `fontforge`, not
+installed here and not something to chase down mid-test; `ttf-readex-
+pro` needed nothing beyond what was already available and is otherwise
+representative: a real GitHub-tarball source, one shared `prepare()`,
+two `package_<name>()` functions).
+- [x] Split packages — `pkgname` with more than one entry now runs
+      `prepare`/`build`/`check` once (shared, matching real makepkg),
+      then each `package_<name>()` into its own `pkg-<name>/`
+      directory, producing one archive per name. Per-sub-package
+      metadata overrides (`pkgdesc+=`, `depends=`, etc., reassigned
+      inside `package_<name>()`) are captured the same way real
+      makepkg does it: read back those variables' final values right
+      after the function runs, in the same bash invocation, falling
+      back to the shared top-level value for anything a given
+      sub-package doesn't touch.
+      Verified for real against `ttf-readex-pro`: both `ttf-readex-
+      pro` and `ttf-readex-pro-variable` built as separate, correctly
+      distinct archives (right `pkgname`/`pkgdesc` in each `.PKGINFO`,
+      shared `pkgbase`, correct per-package file sets and sizes), and
+      both installed successfully side by side via `pacman-rs -U`.
+- [x] **Symlink handling in `package_archive`** — a real, previously
+      undiscovered bug, caught only because `ttf-readex-pro` happens
+      to `ln -s` a shared fontconfig file into place (no earlier test
+      package created a symlink in its `pkgdir`). `walk_all` classified
+      filesystem entries by calling `path.is_dir()`/implicitly
+      "else file", but that check *follows* symlinks — a symlink to a
+      regular file was misfiled as `Entry::File`, whose writer then
+      opened it with a link-following `File::open` (reading the
+      *target's* content) while the tar header still carried the
+      original entry's `lstat`-based size (0 bytes, since a symlink
+      itself has no content) — a size/content-length mismatch that
+      corrupted the archive (confirmed directly: `tar: Skipping to
+      next header` on extraction, gone after the fix). Fixed by
+      checking `fs::symlink_metadata` (`lstat`, never follows) first,
+      adding a real `Entry::Symlink` case, and writing it with `tar`'s
+      own `append_link` (entry type `Symlink`, real link target via
+      `fs::read_link`, zero content) instead of trying to write file
+      bytes at all. Verified: both `ttf-readex-pro` archives now
+      extract cleanly with a correctly-typed `lrwxrwxrwx` entry, and
+      installing them creates a real, correctly resolving symlink on
+      disk. Re-verified no regression on every previously-working real
+      package (`dmenu-git`, none of which happen to contain a symlink,
+      so this was purely additive).
 - [x] `which` and `patch` — the remaining small, well-scoped
       base-devel-adjacent utilities PKGBUILDs commonly need. `which`
       vendors the `which` crate (real cross-platform `PATH` lookup);

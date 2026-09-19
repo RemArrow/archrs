@@ -242,4 +242,8 @@ const UTILS: &[(&str, &str)] = &[
     ("shutdown", "archrs-native"),
     // Real DHCPv4 client — see dhcp_cmd.rs.
     ("dhcpc", "archrs-native"),
+    // Real terminal text editor — see kiro_cmd.rs for why it's `kiro`/
+    // `nano`, deliberately not `vi`/`vim`.
+    ("kiro", "archrs-native"),
+    ("nano", "archrs-native"),
 ];

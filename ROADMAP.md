@@ -1872,6 +1872,64 @@ address — a real gap for "usable," the same theme Phase 9 opened.
         `ping_cmd.rs` — this is the image missing a real config file a
         full install would have, not a code bug.
 
+### Phase 11 — a real text editor (complete)
+Closes the very last item from Phase 5's original closing-boundary
+list: interactive/curses tools. `top` remains open (no real need for
+it identified yet), but a text editor is a genuine, basic requirement
+for "usable" — editing a config file with `sed`/sending it through
+`cat > file <<EOF` isn't a substitute for one.
+
+- [x] **`kiro`/`nano`** (`kiro_cmd.rs`) — vendors
+      [`kiro-editor`](https://github.com/rhysd/kiro-editor) (rhysd's
+      Rust port of the "kilo" text-editor tutorial: real termios raw
+      mode, real cursor/screen handling — not worth hand-rolling) as a
+      thin wrapper around its public library API, same shape as
+      `less_cmd.rs` wrapping `minus`. **Deliberately not aliased as
+      `vi`/`vim`**: `kiro-editor`'s interaction model is Ctrl-key-driven
+      with no modes at all, genuinely closer to real `nano` than to
+      real `vi`'s modal editing — aliasing it as `vi` would actively
+      mislead anyone expecting real `vi` keybindings, so it's
+      registered under its own name and as `nano`, never as a stand-in
+      for `vi`/`vim` (a genuinely different, much larger tool this
+      doesn't attempt to be).
+      Verified for real with a new checked-in test,
+      `scripts/editor-test.sh` (+ `editor-test-driver.py`) — runs
+      directly on the host, no QEMU/root needed, since editing a file
+      isn't privileged: opens a real file under a real pseudo-terminal,
+      types real keystrokes, confirms `Ctrl-S` actually changes the
+      file **on disk while the editor is still running** (not just
+      after quitting — a real save, not just a clean exit), quits with
+      `Ctrl-Q`, and confirms the process exited on its own rather than
+      needing a force-kill.
+      Hit the same class of issue already found for `brush` in
+      Phase 9's login test: a bare `pty.fork()` child starts with a
+      0x0 window size, and `kiro-editor` falls back to probing it via
+      an ANSI cursor-position query that nothing was answering, so it
+      just hung. Fixed the same way, but more directly this time —
+      setting a real `TIOCSWINSZ` on the pty before exec (what a real
+      terminal always already has) rather than teaching the driver to
+      answer the query — good enough for a single nested pty, unlike
+      `login-test.sh`'s multiply-nested VM/login/shell chain, where
+      that same terminal-size assumption is real but harder to
+      shortcut around.
+      Also tried, and deliberately abandoned, exercising this same
+      edit/save/quit round trip *through* `login-test.sh`'s full nested
+      session (VM serial console → `login` → `brush` → `kiro`) rather
+      than as its own host-level test. Real, reproducible flakiness
+      showed up there that doesn't show up in the clean host-level
+      test — most plausibly `Ctrl-S`/`Ctrl-Q`'s own classic XON/XOFF
+      software-flow-control meaning interacting with timing somewhere
+      in that much longer nested-pty chain (`kiro-editor` does disable
+      `IXON` in its own raw-mode setup, confirmed by reading its
+      source, but a login session crosses several process handoffs
+      where terminal state could plausibly be momentarily different).
+      Chasing exact timing through three nested interactive programs
+      for a test harness, when the feature itself is already cleanly
+      and deterministically proven at the host level, was judged not
+      worth it — a real example of picking the test that actually
+      isolates the thing being verified, rather than the most
+      "end-to-end"-looking one.
+
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,
 most already upstream projects in their own languages) is not a software

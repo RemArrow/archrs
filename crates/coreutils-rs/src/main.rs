@@ -33,6 +33,7 @@ mod file_cmd;
 mod grep_cmd;
 mod gzip_cmd;
 mod ip_cmd;
+mod kiro_cmd;
 mod kmod_cmd;
 mod less_cmd;
 mod lsblk_cmd;
@@ -245,6 +246,7 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "poweroff" | "halt" => power_cmd::run_poweroff(args),
         "shutdown" => power_cmd::run_shutdown(args),
         "dhcpc" => dhcp_cmd::run(args),
+        "kiro" | "nano" => kiro_cmd::run(args),
         _ => return None,
     })
 }

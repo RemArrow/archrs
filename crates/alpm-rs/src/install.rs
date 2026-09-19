@@ -1,6 +1,7 @@
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use tar::Archive;
 use thiserror::Error;
@@ -19,6 +20,8 @@ pub enum InstallError {
     WriteDb(PathBuf, io::Error),
     #[error("{0} has no .PKGINFO member")]
     MissingPkginfo(PathBuf),
+    #[error("failed to run install scriptlet {0}: {1}")]
+    ScriptletSpawn(PathBuf, io::Error),
 }
 
 /// Reads just the `.PKGINFO` member out of a `.pkg.tar.zst` archive —
@@ -219,4 +222,64 @@ fn write_local_files(pkg_dir: &Path, paths: &[String]) -> Result<(), InstallErro
     let mut f = File::create(&dest).map_err(|e| InstallError::WriteDb(dest.clone(), e))?;
     f.write_all(out.as_bytes())
         .map_err(|e| InstallError::WriteDb(dest, e))
+}
+
+/// Runs one function (`pre_install`/`post_install`/`pre_upgrade`/
+/// `post_upgrade`/`pre_remove`/`post_remove`) from a package's real
+/// `.install` scriptlet, if `extract_package` saved one for it
+/// (`<pkg_dir>/install`) and that function is actually defined in it —
+/// real pacman silently does nothing for a function a package's
+/// scriptlet doesn't define, same as here. A `.install` file is a
+/// real bash script (a set of function definitions, no different in
+/// kind from a PKGBUILD's own `package()`/`pkgver()`), so this is
+/// sourced and called with real bash, the same approach used
+/// throughout this project rather than trying to interpret it.
+///
+/// Real pacman only ever runs these against the actual live root
+/// (`/`) — for any other `root` (a `--root DIR` test/chroot install,
+/// which this project's own test suite uses constantly), a scriptlet
+/// meant for the *real* system (`gtk-update-icon-cache`,
+/// `mkinitcpio -P`, etc.) would act on the real host instead of the
+/// fake root if simply run as-is, since this project has no real
+/// `chroot(2)` privilege to sandbox it the way pacman itself can.
+/// Callers are responsible for only invoking this when `root` really
+/// is `/` — see `pacman-rs`'s own gating — rather than this function
+/// silently no-oping, so that skip decision stays visible rather than
+/// hidden inside a library call.
+pub fn run_install_scriptlet(
+    pkg_dir: &Path,
+    action: &str,
+    args: &[&str],
+) -> Result<(), InstallError> {
+    let script_path = pkg_dir.join("install");
+    if !script_path.is_file() {
+        return Ok(());
+    }
+    let arg_list = args.join(" ");
+    // `declare -F` gates the call so a scriptlet that doesn't define
+    // this particular function is a silent no-op, matching real
+    // pacman — not every package defines all six possible functions.
+    // Written as `if ... ; then ...; fi` rather than `cond && cmd` so
+    // "function not defined" (the `if` false, exit 0) is distinct from
+    // "function defined but failed" (the `if`'s exit code is the
+    // function's own) — `&&` would make both cases look like failure.
+    let script = format!(
+        "source '{}'; if declare -F {action} >/dev/null 2>&1; then {action} {arg_list}; fi",
+        script_path.display()
+    );
+    let status = Command::new("bash")
+        .arg("-c")
+        .arg(&script)
+        .status()
+        .map_err(|e| InstallError::ScriptletSpawn(script_path.clone(), e))?;
+    // A scriptlet's own failure is a warning, not a fatal install
+    // error, matching real pacman (it reports and continues rather
+    // than rolling back an otherwise-successful file extraction).
+    if !status.success() {
+        eprintln!(
+            "warning: {action} scriptlet in {} failed",
+            script_path.display()
+        );
+    }
+    Ok(())
 }

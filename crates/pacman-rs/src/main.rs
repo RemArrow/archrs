@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use alpm_rs::install::extract_package;
-use alpm_rs::{fetch, remove, resolve, verify, LocalDb, PacmanConfig, SyncDb, Universe};
+use alpm_rs::{LocalDb, PacmanConfig, SyncDb, Universe, fetch, remove, resolve, verify};
 use anyhow::{Context, Result};
 
 const DEFAULT_CONFIG: &str = "/etc/pacman.conf";
@@ -95,9 +95,7 @@ fn parse_args() -> Result<Args> {
         } else if arg == "--nodeps" {
             args.nodeps = true;
         } else if arg == "--root" {
-            args.root = Some(PathBuf::from(
-                raw.next().context("--root requires a path")?,
-            ));
+            args.root = Some(PathBuf::from(raw.next().context("--root requires a path")?));
         } else if arg == "--dbpath" {
             args.dbpath = Some(PathBuf::from(
                 raw.next().context("--dbpath requires a path")?,
@@ -189,6 +187,38 @@ fn run() -> Result<()> {
     }
 }
 
+/// Runs a package's `post_install`/`post_upgrade` `.install` scriptlet
+/// function (whichever applies, matching `old_version`'s presence),
+/// but only when `config.root_dir` is the real live root (`/`) —
+/// real pacman only ever runs these against the actual system; for
+/// any other root (this project's own `--root DIR` test installs,
+/// used constantly by its own test suite), a scriptlet meant for the
+/// real system (`gtk-update-icon-cache`, `mkinitcpio -P`, etc.) would
+/// wrongly act on the real host instead of the fake root if simply
+/// run as-is — this project has no real `chroot(2)` privilege to
+/// sandbox it the way pacman itself does. See
+/// `alpm_rs::install::run_install_scriptlet`'s own docs for why that
+/// function itself doesn't make this decision.
+fn run_install_scriptlet_if_real_root(
+    config: &PacmanConfig,
+    pkg: &alpm_rs::package::Package,
+    old_version: Option<&str>,
+) -> Result<()> {
+    if config.root_dir != Path::new("/") {
+        return Ok(());
+    }
+    let pkg_dir = config
+        .db_path
+        .join("local")
+        .join(format!("{}-{}", pkg.name, pkg.version));
+    let (action, scriptlet_args): (&str, Vec<&str>) = match old_version {
+        Some(old) => ("post_upgrade", vec![pkg.version.as_str(), old]),
+        None => ("post_install", vec![pkg.version.as_str()]),
+    };
+    alpm_rs::install::run_install_scriptlet(&pkg_dir, action, &scriptlet_args)
+        .with_context(|| format!("running {action} scriptlet for {}", pkg.name))
+}
+
 /// `-U`: install a local package file directly, without going through a
 /// sync repo — the same extraction/local-db path `-S` uses, just fed a
 /// `Package` read out of the archive's own `.PKGINFO` instead of one
@@ -223,10 +253,14 @@ fn run_install_local(args: &Args, config: &PacmanConfig) -> Result<()> {
         // -U installs are explicit unless upgrading a package that was
         // already installed as a dependency, which keeps its reason —
         // same as -S's upgrade path.
-        let reason = match installed.iter().find(|p| p.name == pkg.name) {
+        let existing = installed.iter().find(|p| p.name == pkg.name);
+        let reason = match existing {
             Some(existing) if existing.reason.as_deref() == Some("1") => "dependency",
             _ => "explicit",
         };
+        let old_version = existing
+            .filter(|p| p.version != pkg.version)
+            .map(|p| p.version.clone());
 
         println!(
             "installing {} ({}) into {}...",
@@ -234,9 +268,16 @@ fn run_install_local(args: &Args, config: &PacmanConfig) -> Result<()> {
             pkg.version,
             config.root_dir.display()
         );
-        let files = extract_package(archive_path, &config.root_dir, &config.db_path, &pkg, reason)
-            .with_context(|| format!("extracting {target}"))?;
+        let files = extract_package(
+            archive_path,
+            &config.root_dir,
+            &config.db_path,
+            &pkg,
+            reason,
+        )
+        .with_context(|| format!("extracting {target}"))?;
         println!("  {} files installed", files.len());
+        run_install_scriptlet_if_real_root(config, &pkg, old_version.as_deref())?;
     }
 
     println!("done.");
@@ -270,7 +311,10 @@ fn run_query(args: &Args, config: &PacmanConfig) -> Result<()> {
     }
 
     if args.list {
-        let name = args.targets.first().context("-Ql requires a package name")?;
+        let name = args
+            .targets
+            .first()
+            .context("-Ql requires a package name")?;
         let pkg = db
             .find(name)?
             .with_context(|| format!("package '{name}' was not found"))?;
@@ -338,12 +382,17 @@ fn refresh_syncdbs(config: &PacmanConfig) -> Result<()> {
 /// Installed packages whose sync-repo version is strictly newer — the
 /// set `-Su` upgrades. Matched by exact package name only (not virtual
 /// `provides`), same as real pacman's upgrade matching.
-fn find_upgrade_targets<'a>(universe: &Universe, installed: &'a [alpm_rs::Package]) -> Vec<&'a str> {
+fn find_upgrade_targets<'a>(
+    universe: &Universe,
+    installed: &'a [alpm_rs::Package],
+) -> Vec<&'a str> {
     installed
         .iter()
         .filter_map(|pkg| {
             let candidate = universe.find_by_name(&pkg.name)?;
-            if alpm_rs::vercmp(&candidate.package.version, &pkg.version) == std::cmp::Ordering::Greater {
+            if alpm_rs::vercmp(&candidate.package.version, &pkg.version)
+                == std::cmp::Ordering::Greater
+            {
                 Some(pkg.name.as_str())
             } else {
                 None
@@ -443,14 +492,13 @@ fn install_all(
             .iter()
             .find(|r| r.name == candidate.repo)
             .with_context(|| format!("repo '{}' missing from config", candidate.repo))?;
-        let filename = pkg
-            .filename
-            .as_ref()
-            .with_context(|| format!("package '{}' has no %FILENAME% in its sync entry", pkg.name))?;
+        let filename = pkg.filename.as_ref().with_context(|| {
+            format!("package '{}' has no %FILENAME% in its sync entry", pkg.name)
+        })?;
 
         println!("resolving {}...", pkg.name);
-        let servers =
-            fetch::resolve_servers(repo).with_context(|| format!("resolving servers for {}", repo.name))?;
+        let servers = fetch::resolve_servers(repo)
+            .with_context(|| format!("resolving servers for {}", repo.name))?;
 
         let dest = cache_dir.join(filename);
         println!("downloading {filename}...");
@@ -475,7 +523,10 @@ fn install_all(
         // version's directory would otherwise stick around after the new
         // one is written, leaving `-Q` to find both and effectively show
         // the package installed twice.
-        if let Some(old) = installed.iter().find(|p| p.name == pkg.name && p.version != pkg.version) {
+        if let Some(old) = installed
+            .iter()
+            .find(|p| p.name == pkg.name && p.version != pkg.version)
+        {
             let old_dir = config
                 .db_path
                 .join("local")

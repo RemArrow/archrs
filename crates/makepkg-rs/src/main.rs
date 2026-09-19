@@ -49,11 +49,16 @@
 //!    calls succeed without needing real root, same as real makepkg.
 //!    `prepare`/`build`/`check` run as the invoking user.
 //! 6. Tar+zstd each pkgdir's contents into
-//!    `<name>-<ver>-<rel>-<arch>.pkg.tar.zst`, with a real `.PKGINFO`
-//!    member (`alpm_rs::package::write_pkginfo`), correctly typing
-//!    symlinks as symlinks rather than following them (`walk_all`/
-//!    `write_root_owned_entry` — a real bug caught by testing against
-//!    a real package that creates one, see below).
+//!    `<name>-<epoch:><ver>-<rel>-<arch>.pkg.tar.zst` (the `epoch:`
+//!    prefix only when the PKGBUILD sets a nonzero `epoch=`, matching
+//!    real pacman's own version-string format), with a real
+//!    `.PKGINFO` member (`alpm_rs::package::write_pkginfo`) and a real
+//!    `.INSTALL` member when `install=` names a scriptlet file
+//!    (copied in verbatim — `pacman-rs`'s own install path is what
+//!    actually runs it, at the right point in a real install/upgrade),
+//!    correctly typing symlinks as symlinks rather than following them
+//!    (`walk_all`/`write_root_owned_entry` — a real bug caught by
+//!    testing against a real package that creates one, see below).
 //!
 //! Hardened against real AUR packages throughout, not just synthetic
 //! test PKGBUILDs — see ROADMAP.md's "Hardened against real AUR
@@ -77,17 +82,30 @@
 //!   then had a header size of 0 [from the symlink's own `lstat`]
 //!   but streamed the *target* file's full content [since opening a
 //!   symlink path follows it], corrupting the archive).
-//! All four built, installed via `pacman-rs -U`, and ran/resolved
-//! correctly afterward.
+//! - `papirus-icon-theme-git`: a real `install=` scriptlet reference
+//!   (no `.INSTALL` packaging existed at all before this) and a real
+//!   `epoch=1` (no epoch support existed either — the built package's
+//!   version would have silently omitted it, `20260801.r0.g5f8b701-1`
+//!   instead of the real `1:20260801.r0.g5f8b701-1`).
 //!
-//! Scope/known gaps: no `.install` scriptlets, no PGP source
-//! verification, no `noextract`, `svn+`/`hg+`/`bzr+` VCS sources
-//! (real but rarer than git), `md5sums`/`sha1sums`/`sha224sums`/
-//! `sha384sums`/`cksums` (real but rare checksum variants — an entry
-//! using only one of these is treated as unverifiable, see above,
-//! same as having none at all), and the `declare -p` output parser
-//! handles the common case (quoted scalars and indexed arrays) rather
-//! than being a fully shell-quoting-aware parser.
+//! All five built, installed via `pacman-rs -U`, and ran/resolved
+//! correctly afterward. `.install` execution itself (`pacman-rs`'s own
+//! side of this — see `alpm_rs::install::run_install_scriptlet`) was
+//! verified separately, in isolation, rather than against papirus'
+//! real scriptlet through a live `-U`: it deliberately only runs
+//! against the real system root (`/`), never a `--root DIR` test
+//! install, since a scriptlet meant for the real system
+//! (`gtk-update-icon-cache`, etc.) would otherwise wrongly act on the
+//! real host instead of the fake root being tested against.
+//!
+//! Scope/known gaps: no PGP source verification, no `noextract`,
+//! `svn+`/`hg+`/`bzr+` VCS sources (real but rarer than git),
+//! `md5sums`/`sha1sums`/`sha224sums`/`sha384sums`/`cksums` (real but
+//! rare checksum variants — an entry using only one of these is
+//! treated as unverifiable, see above, same as having none at all),
+//! and the `declare -p` output parser handles the common case (quoted
+//! scalars and indexed arrays) rather than being a fully
+//! shell-quoting-aware parser.
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -104,6 +122,7 @@ const VARS: &[&str] = &[
     "pkgbase",
     "pkgver",
     "pkgrel",
+    "epoch",
     "pkgdesc",
     "url",
     "license",
@@ -115,6 +134,7 @@ const VARS: &[&str] = &[
     "sha256sums",
     "sha512sums",
     "b2sums",
+    "install",
 ];
 
 #[derive(Debug, Default)]
@@ -586,6 +606,7 @@ const SPLIT_METADATA_VARS: &[&str] = &[
     "depends",
     "provides",
     "conflicts",
+    "install",
 ];
 
 /// Runs a split package's `package_<name>()` function under fakeroot
@@ -769,7 +790,12 @@ fn write_root_owned_entry<W: Write>(
     Ok(())
 }
 
-fn package_archive(pkgdir: &Path, pkg: &Package, out_path: &Path) -> Result<u64> {
+fn package_archive(
+    pkgdir: &Path,
+    pkg: &Package,
+    out_path: &Path,
+    install_file: Option<&Path>,
+) -> Result<u64> {
     let file = File::create(out_path)?;
     let encoder = zstd::Encoder::new(file, 0)?.auto_finish();
     let mut builder = tar::Builder::new(encoder);
@@ -791,6 +817,23 @@ fn package_archive(pkgdir: &Path, pkg: &Package, out_path: &Path) -> Result<u64>
     header.set_gid(0);
     header.set_cksum();
     builder.append_data(&mut header, ".PKGINFO", pkginfo.as_bytes())?;
+
+    // `install=` names a real bash scriptlet (`pre_install`/
+    // `post_install`/etc. function definitions) that real makepkg
+    // copies into the archive as `.INSTALL`, for `pacman -U`/`-S` to
+    // run at the right point in a real install/upgrade/remove — the
+    // same file, unmodified, no need to inspect its contents here.
+    if let Some(path) = install_file {
+        let contents = fs::read(path)
+            .with_context(|| format!("reading install scriptlet {}", path.display()))?;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o644);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_cksum();
+        builder.append_data(&mut header, ".INSTALL", contents.as_slice())?;
+    }
 
     for entry in &entries {
         write_root_owned_entry(&mut builder, entry, pkgdir)?;
@@ -900,15 +943,27 @@ fn run() -> Result<()> {
     run_pkgbuild_function(&startdir, &srcdir, &shared_pkgdir, &pkgbuild, "build")?;
     run_pkgbuild_function(&startdir, &srcdir, &shared_pkgdir, &pkgbuild, "check")?;
 
-    let version = format!("{ver}-{rel}");
+    // Real pacman version strings are "epoch:pkgver-pkgrel" only when
+    // epoch is set and nonzero — omitted entirely otherwise (matching
+    // `alpm_rs::version::vercmp`'s own `split_evr`, which already
+    // treats a missing epoch as `0`, so this doesn't need to write
+    // "0:" explicitly for the common case).
+    let epoch = pkgbuild
+        .scalar("epoch")
+        .filter(|e| *e != "0" && !e.is_empty());
+    let version = match epoch {
+        Some(e) => format!("{e}:{ver}-{rel}"),
+        None => format!("{ver}-{rel}"),
+    };
 
     if pkgnames.len() == 1 {
         let name = &pkgnames[0];
         run_pkgbuild_function(&startdir, &srcdir, &shared_pkgdir, &pkgbuild, "package")?;
         let pkg = build_package_meta(name, &base, &version, &carch, &pkgbuild, &HashMap::new());
+        let install_file = pkgbuild.scalar("install").map(|f| startdir.join(f));
         let out_name = format!("{name}-{version}-{carch}.pkg.tar.zst");
         let out_path = startdir.join(&out_name);
-        let size = package_archive(&shared_pkgdir, &pkg, &out_path)?;
+        let size = package_archive(&shared_pkgdir, &pkg, &out_path, install_file.as_deref())?;
         println!("makepkg-rs: built {out_name} ({size} bytes uncompressed)");
         return Ok(());
     }
@@ -931,9 +986,14 @@ fn run() -> Result<()> {
 
         let overrides = run_package_and_capture_metadata(&startdir, &srcdir, &sub_pkgdir, &func)?;
         let pkg = build_package_meta(name, &base, &version, &carch, &pkgbuild, &overrides);
+        let install_file = overrides
+            .get("install")
+            .and_then(|v| v.first().cloned())
+            .or_else(|| pkgbuild.scalar("install").map(str::to_string))
+            .map(|f| startdir.join(f));
         let out_name = format!("{name}-{version}-{carch}.pkg.tar.zst");
         let out_path = startdir.join(&out_name);
-        let size = package_archive(&sub_pkgdir, &pkg, &out_path)?;
+        let size = package_archive(&sub_pkgdir, &pkg, &out_path, install_file.as_deref())?;
         println!("makepkg-rs: built {out_name} ({size} bytes uncompressed)");
     }
     Ok(())

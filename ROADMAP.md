@@ -656,6 +656,67 @@ two `package_<name>()` functions).
       disk. Re-verified no regression on every previously-working real
       package (`dmenu-git`, none of which happen to contain a symlink,
       so this was purely additive).
+
+**Extended to `.install` scriptlets and `epoch=` (2026-09-19).** Found
+a real package needing both by grepping several candidates' `.SRCINFO`
+for an `install =` field: `papirus-icon-theme-git` (a real
+`install='alt-icons.install'` reference, and a real `epoch=1` — real
+pacman versions are `epoch:pkgver-pkgrel` when epoch is set and
+nonzero, omitted otherwise). `alpm-rs`'s own `extract_package` already
+*saved* a package's `.INSTALL` member to the local db on install (a
+detail already in place, just never actually used) — the real gaps
+were that nothing ever *wrote* one into a built package, and nothing
+ever *ran* it.
+- [x] `install=` → `.INSTALL` packaging in `makepkg-rs` — the named
+      file is copied into the archive verbatim as a `.INSTALL` member
+      (mode 644, same as `.PKGINFO`), including per-sub-package
+      `install=` overrides for split packages (added to the same
+      `SPLIT_METADATA_VARS` mechanism already capturing `pkgdesc`/
+      `depends`/etc.). Verified for real: `papirus-icon-theme-git`'s
+      built archive contains a real `.INSTALL` member with its actual
+      `post_install`/`post_upgrade` function bodies, byte-identical to
+      the real scriptlet file in its AUR git repo.
+- [x] `epoch=` → real `epoch:pkgver-pkgrel` version strings in
+      `makepkg-rs` — `alpm_rs::version::vercmp` already fully supported
+      parsing an epoch prefix (it was only ever missing from the
+      *write* side). Verified: the built package's `.PKGINFO` and
+      filename both correctly show `1:20260801.r0.g5f8b701-1`, not the
+      epoch-less version the PKGBUILD's own `pkgver()` alone produces.
+- [x] Real `.INSTALL` scriptlet *execution* — `alpm_rs::install::
+      run_install_scriptlet` sources the real `.install` file (a bash
+      script, no different in kind from a PKGBUILD's own functions —
+      same "source it with real bash" approach used throughout this
+      project) and calls whichever of `pre_install`/`post_install`/
+      `pre_upgrade`/`post_upgrade`/`pre_remove`/`post_remove` applies,
+      gated with `declare -F` so a function the scriptlet doesn't
+      define is a silent no-op rather than a reported failure — real
+      pacman behaves the same way. A scriptlet's own failure is a
+      warning, not a fatal install error, matching real pacman (it
+      doesn't roll back an otherwise-successful file extraction over
+      this). `pacman-rs`'s `-U` path now determines `post_install` vs.
+      `post_upgrade` (with the correct old/new version args) from
+      whether the package was already installed, the same distinction
+      it already made for install `reason` tracking.
+      **Deliberately gated to only run against the real live root
+      (`/`)** — never a `--root DIR` install, which this project's own
+      test suite (and this very hardening effort) uses constantly.
+      A scriptlet meant for the real system (`gtk-update-icon-cache`,
+      `mkinitcpio -P`, etc.) would wrongly act on the real host instead
+      of the fake root if simply run as-is, since this project has no
+      real `chroot(2)` privilege to sandbox it the way pacman itself
+      can. This is why the execution mechanism itself was verified
+      separately, in isolation (a scratch `.install` file, called
+      directly, independent of `pacman-rs`'s CLI/root-gating) — not by
+      actually running `pacman-rs -U` against this dev machine's real
+      `/`, which would have meant genuinely executing an arbitrary
+      real-world scriptlet against the live system. Confirmed all
+      three real paths this way: a defined function runs with the
+      correct arguments, an undefined one is a silent no-op, and a
+      failing one prints a warning without returning an error.
+      Verified separately (safely) that `pacman-rs -U --root DIR`
+      correctly skips execution entirely for a non-`/` root, while
+      still installing files and saving the `.INSTALL` scriptlet to
+      the local db as before.
 - [x] `which` and `patch` — the remaining small, well-scoped
       base-devel-adjacent utilities PKGBUILDs commonly need. `which`
       vendors the `which` crate (real cross-platform `PATH` lookup);

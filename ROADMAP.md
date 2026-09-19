@@ -24,7 +24,13 @@ not just inside an unprivileged `unshare` namespace, where mounting
 (documented as an unverified sandbox limitation in Phase 3's own section).
 
 Closed that gap with an actual QEMU boot, entirely without host root
-(no `sudo`, no loop-mount): `pacman-rs -S` installed a real minimal base
+(no `sudo`, no loop-mount) — now a repeatable check via
+`scripts/boot-test.sh` (needs `cargo build --release` first; `--clean`
+forces a fresh base-system install, otherwise the cached rootfs makes a
+re-run take single-digit seconds), not just a one-off manual test: it
+builds the same setup below, boots it, and greps the serial log for the
+specific PASS markers this section describes, exiting non-zero if any are
+missing. `pacman-rs -S` installed a real minimal base
 system (`glibc`, `filesystem`, `bash`, plus `xz`/`file` for `coreutils-rs`'s
 own runtime library needs) into a sandboxed root against real Manjaro
 mirrors; `mke2fs -d <dir>` (populates an ext4 image directly from a host

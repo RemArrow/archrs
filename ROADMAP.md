@@ -642,6 +642,27 @@ rather than an exhaustive, fixed checklist the way Phases 1-4 were.
       exit code.
       Not implemented: IPv6-specific flags, `-f`/`-A`
       (flood/adaptive), `-s` (payload size).
+- [x] `column` — from util-linux, a separate project from both
+      `uutils/coreutils` and GNU. A genuinely simple text-alignment
+      algorithm with no real "engine" worth vendoring (unlike most of
+      what else is in this crate), so this is a plain from-scratch
+      implementation. Covers `-t` (table mode, matching real
+      `column -t`'s exact spacing: per-column field width, left-
+      justified, joined by two literal spaces, last field on each line
+      left unpadded) and `-s`/`-s<SEP>` (custom input separator).
+      Verified byte-identical against real `column` for default
+      whitespace-separated input, a custom `-s:` separator, and stdin.
+      Explored but deliberately declined: `dig`/DNS lookup — the only
+      real Rust DNS resolver library (`hickory-resolver`) defaults to
+      async/tokio, which would be the first async dependency in this
+      otherwise fully synchronous codebase for one command (~139
+      transitive packages). Flagged to the user as a real architectural
+      call rather than decided unilaterally; they chose to skip it.
+      `curl`/`ping` already cover the common hostname-resolution needs
+      that would otherwise motivate it.
+      Not implemented: `-o` (custom output separator), `-c` (output
+      width / multi-column list mode for non-table input), `-J`/`-N`
+      (JSON/named-column modes).
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

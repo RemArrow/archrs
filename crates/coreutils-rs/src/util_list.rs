@@ -155,4 +155,8 @@ const UTILS: &[(&str, &str)] = &[
     // `ping`, built on the `ping` crate's ICMP wire-protocol handling
     // — see ping_cmd.rs.
     ("ping", "archrs-native"),
+    // `column` (util-linux, not GNU/uutils) — a simple text-alignment
+    // algorithm with no real engine to vendor, so this is a plain
+    // from-scratch implementation — see column_cmd.rs.
+    ("column", "archrs-native"),
 ];

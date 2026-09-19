@@ -725,6 +725,59 @@ rather than an exhaustive, fixed checklist the way Phases 1-4 were.
       Not implemented: `-o` (custom output separator), `-c` (output
       width / multi-column list mode for non-table input), `-J`/`-N`
       (JSON/named-column modes).
+- [x] `diff`/`cmp` — GNU diffutils, a separate upstream project from
+      `uutils/coreutils`, but with its own official uutils-maintained
+      Rust port to vendor: the `diffutils` crate (library name
+      `diffutilslib`). Its multicall CLI dispatch (by argv[0], picking
+      `diff` vs `cmp`) isn't part of the published library though —
+      only `src/lib.rs`'s `pub mod`s are, which omits the `diff`
+      module's own CLI glue entirely (it exists only in the binary
+      crate's own `main.rs`, never `pub`). Same situation as `awk-rs`
+      needing its own CLI layer in `awk_cmd.rs`: `diff_cmd.rs`
+      re-derives that thin (~40-line) CLI wrapper itself, calling
+      straight into the vendored crate's real, unmodified, public
+      diff-algorithm and flag-parsing functions for everything that
+      matters (`{normal,unified,context,ed,side}_diff::diff`,
+      `params::parse_params`). `cmp` didn't even need that: its own
+      `cmp()` function already does 100% of its real output (default
+      "differ" message, `-l` verbose byte listing, EOF messages) as a
+      side effect before returning just a summary
+      `Cmp::Equal`/`Cmp::Different`, so `run_cmp` is a straight,
+      unmodified call into the vendored crate's own public logic.
+      Verified byte-identical against real GNU diffutils 3.12 across:
+      `diff -u`/`-c`/normal/`-e` on files with real differences,
+      `-q`/`--brief`, `-s` on identical files, reading one side from
+      stdin (`-`); `cmp` on identical files (silent, exit 0),
+      differing files (default message + exit 1), and `-l` (verbose
+      byte-by-byte octal listing) — all byte-for-byte matches.
+      Two real, minor formatting gaps in the vendored crate (0.5.0,
+      a newer, less battle-tested port than `uu_*`/`findutils`),
+      caught by diffing against real diffutils and confirmed
+      functionally harmless rather than patched around, the same
+      standard applied to `free -h` and `ps aux`'s `%CPU` elsewhere in
+      this phase:
+      1. Default (normal) format prints a redundant `,N` on
+         single-line append/change ranges (`3a4,4` instead of real
+         diff's `3a4`) — confirmed real `patch` accepts both forms
+         identically (tested: applying our output with real `patch`
+         reconstructed the target file correctly).
+      2. `-e` (ed script) emits hunks top-to-bottom with line numbers
+         valid against the *progressively-updated* buffer, instead of
+         GNU diff's convention of bottom-to-top hunks numbered against
+         the *original* file. Different convention, not a correctness
+         bug: confirmed by simulating sequential command application
+         (no real `ed` binary available in this environment) that our
+         script still reconstructs the target file exactly when run
+         top-to-bottom, which is what actually piping it into `ed`
+         does.
+      `cmp`'s EOF message also quotes the filename with plain ASCII
+      apostrophes where real `cmp` uses typographic (curly) quote
+      marks — a one-character cosmetic difference in the vendored
+      crate's own error text, not chased further.
+      Not implemented: `diff -r` (recursive directory comparison —
+      `parse_params` has no notion of directories, only two file
+      paths) and `diff3`/`sdiff` (present in real diffutils but not
+      vendored here; not common PKGBUILD/day-to-day needs).
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

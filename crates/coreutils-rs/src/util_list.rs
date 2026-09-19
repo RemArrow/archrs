@@ -159,4 +159,11 @@ const UTILS: &[(&str, &str)] = &[
     // algorithm with no real engine to vendor, so this is a plain
     // from-scratch implementation — see column_cmd.rs.
     ("column", "archrs-native"),
+    // `diff`/`cmp` (GNU diffutils, a separate upstream project with its
+    // own official uutils Rust port) — vendors the real `diffutils`
+    // crate's diff algorithm and flag parsing, with our own thin
+    // multicall glue since that crate's own CLI dispatch isn't exposed
+    // as a library — see diff_cmd.rs.
+    ("diff", "archrs-native"),
+    ("cmp", "archrs-native"),
 ];

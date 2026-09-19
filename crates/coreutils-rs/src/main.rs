@@ -26,6 +26,7 @@ use std::vec::IntoIter;
 mod awk_cmd;
 mod column_cmd;
 mod curl_cmd;
+mod diff_cmd;
 mod file_cmd;
 mod grep_cmd;
 mod gzip_cmd;
@@ -191,6 +192,8 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "file" => file_cmd::run(args),
         "ping" => ping_cmd::run(args),
         "column" => column_cmd::run(args),
+        "diff" => diff_cmd::run_diff(args),
+        "cmp" => diff_cmd::run_cmp(args),
         _ => return None,
     })
 }

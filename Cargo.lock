@@ -851,6 +851,7 @@ dependencies = [
  "brush-shell",
  "bzip2",
  "cargo_metadata",
+ "diffutils",
  "findutils",
  "flate2",
  "grep-matcher",
@@ -863,6 +864,7 @@ dependencies = [
  "ping",
  "procfs",
  "regex",
+ "same-file",
  "tar",
  "ureq",
  "users",
@@ -1293,6 +1295,26 @@ dependencies = [
  "quote",
  "rustc_version",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "diff"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
+
+[[package]]
+name = "diffutils"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba6999910c01606653d73925f86a769a5920393b2baac5c85f87afa3a599b9f8"
+dependencies = [
+ "chrono",
+ "diff",
+ "itoa",
+ "regex",
+ "same-file",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]

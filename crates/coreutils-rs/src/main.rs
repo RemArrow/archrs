@@ -37,6 +37,7 @@ mod patch_cmd;
 mod ping_cmd;
 mod procps_cmd;
 mod sed_cmd;
+mod ss_cmd;
 mod tar_cmd;
 mod which_cmd;
 
@@ -210,6 +211,7 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "dmesg" => dmesg_cmd::run(args),
         "mount" => mount_cmd::run_mount(args),
         "umount" => mount_cmd::run_umount(args),
+        "ss" => ss_cmd::run(args),
         _ => return None,
     })
 }

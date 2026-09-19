@@ -186,4 +186,9 @@ const UTILS: &[(&str, &str)] = &[
     // its own boot-time mounts — see mount_cmd.rs.
     ("mount", "archrs-native"),
     ("umount", "archrs-native"),
+    // Phase 6: `ss` (iproute2) — socket state straight from the
+    // already-vendored `procfs` crate's own net-table parsing (used
+    // elsewhere for ps/free/uptime), no new engine needed — see
+    // ss_cmd.rs.
+    ("ss", "archrs-native"),
 ];

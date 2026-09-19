@@ -933,6 +933,49 @@ Any of the above is a reasonable future phase on its own if a real
 need for it shows up — this boundary reflects "not needed to call the
 userland complete," not "impossible."
 
+### Phase 6 — networking visibility (in progress)
+Opened to pick up the first item from Phase 5's closing boundary list:
+"networking beyond `curl`/`ping`". Rather than `ip`/`ifconfig` (which
+would need real netlink `rtnetlink` handling — a bigger, separate
+scope decision, deferred for now, same spirit as `dig` needing async),
+started with the more self-contained half of that gap:
+
+- [x] `ss` (iproute2 — the modern tool a real Arch install actually
+      ships, unlike the older `net-tools` `netstat`) — no new engine
+      to vendor at all: the already-vendored `procfs` crate (used
+      elsewhere for `ps`/`free`/`uptime`) directly exposes
+      `net::{tcp,tcp6,udp,udp6,unix}()`, parsed from `/proc/net/*`;
+      this file is only the listing/formatting layer on top, plus
+      socket-inode-to-process mapping via `/proc/*/fd` — the exact
+      technique `procfs`'s own module docs demonstrate for a
+      netstat-alike, not something invented here.
+      `-t`/`-u`/`-x` select socket tables (default `-t -u`); `-a`
+      includes listening sockets, `-l` shows only listening ones,
+      matching real `ss` semantics; `-p` maps sockets to owning
+      processes. `-n` accepted as a no-op (never does name lookups in
+      the first place).
+      Verified: socket data (addresses, ports, states, process
+      ownership) matches real `ss -tan`/`-uan`/`-p` exactly for every
+      real socket on this dev machine (TCP/UDP, IPv4/IPv6, listening
+      and established) — checked by direct comparison, not just
+      spot-checking. Two documented, deliberate gaps:
+      1. Column widths are fixed, not real `ss`'s dynamic
+         content/terminal-width sizing — same standard as `ps aux`.
+      2. `Send-Q` on `LISTEN` rows always reads `0` instead of real
+         `ss`'s accept-queue backlog limit (e.g. `4096`) — confirmed,
+         by reading `/proc/net/tcp`'s raw text directly, that this
+         number simply isn't present there at all; real `ss` gets it
+         from a netlink `sock_diag` query instead. A structural gap
+         from the `/proc`-only approach, not a formatting choice —
+         fixing it for real would mean vendoring a netlink client, a
+         bigger decision left for later.
+      Not implemented: raw/packet sockets, `-e`/`-i`/`-o` (extended
+      TCP/timer info), filter expressions.
+
+Still open for this phase: `ip`/`ifconfig` (real interface
+configuration — needs a netlink `rtnetlink` crate, a scope decision on
+the same footing as `dig`'s async dependency, not yet made).
+
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,
 most already upstream projects in their own languages) is not a software

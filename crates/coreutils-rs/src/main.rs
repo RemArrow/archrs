@@ -147,6 +147,15 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "cksum" => uu_cksum::uumain(args),
         "chroot" => uu_chroot::uumain(args),
         "hostname" => uu_hostname::uumain(args),
+        "b2sum" => uu_b2sum::uumain(args),
+        "basenc" => uu_basenc::uumain(args),
+        "pr" => uu_pr::uumain(args),
+        "sha224sum" => uu_sha224sum::uumain(args),
+        "sha384sum" => uu_sha384sum::uumain(args),
+        "stty" => uu_stty::uumain(args),
+        "tac" => uu_tac::uumain(args),
+        "truncate" => uu_truncate::uumain(args),
+        "more" => uu_more::uumain(args),
         "find" => {
             let owned = run_findutils_str_args(args);
             let strs: Vec<&str> = owned.iter().map(String::as_str).collect();

@@ -869,9 +869,11 @@ dependencies = [
  "ureq",
  "users",
  "uu_arch",
+ "uu_b2sum",
  "uu_base32",
  "uu_base64",
  "uu_basename",
+ "uu_basenc",
  "uu_cat",
  "uu_chgrp",
  "uu_chmod",
@@ -914,6 +916,7 @@ dependencies = [
  "uu_mkfifo",
  "uu_mknod",
  "uu_mktemp",
+ "uu_more",
  "uu_mv",
  "uu_nice",
  "uu_nl",
@@ -924,6 +927,7 @@ dependencies = [
  "uu_paste",
  "uu_pathchk",
  "uu_pinky",
+ "uu_pr",
  "uu_printenv",
  "uu_printf",
  "uu_pwd",
@@ -933,7 +937,9 @@ dependencies = [
  "uu_rmdir",
  "uu_seq",
  "uu_sha1sum",
+ "uu_sha224sum",
  "uu_sha256sum",
+ "uu_sha384sum",
  "uu_sha512sum",
  "uu_shred",
  "uu_shuf",
@@ -942,8 +948,10 @@ dependencies = [
  "uu_split",
  "uu_stat",
  "uu_stdbuf",
+ "uu_stty",
  "uu_sum",
  "uu_sync",
+ "uu_tac",
  "uu_tail",
  "uu_tee",
  "uu_test",
@@ -951,6 +959,7 @@ dependencies = [
  "uu_touch",
  "uu_tr",
  "uu_true",
+ "uu_truncate",
  "uu_tsort",
  "uu_tty",
  "uu_uname",
@@ -1067,6 +1076,7 @@ dependencies = [
  "crossterm_winapi",
  "derive_more",
  "document-features",
+ "filedescriptor",
  "mio",
  "parking_lot",
  "rustix",
@@ -1514,6 +1524,17 @@ dependencies = [
  "cfg-if",
  "rustix",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "filedescriptor"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e40758ed24c9b2eeb76c35fb0aebc66c626084edd827e07e1552279814c6682d"
+dependencies = [
+ "libc",
+ "thiserror 1.0.69",
+ "winapi",
 ]
 
 [[package]]
@@ -4557,6 +4578,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_b2sum"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4aa4061f010d64b18f046f6aba14cac3d2dfe4a824816e5d1d30d554c7001c6e"
+dependencies = [
+ "clap",
+ "fluent",
+ "uu_checksum_common",
+ "uucore 0.12.0",
+]
+
+[[package]]
 name = "uu_base32"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4588,6 +4621,18 @@ checksum = "b29c8c798465d8001a90b6231554f8e00e9c4cf781a9f7d0b96224dcaac77ecd"
 dependencies = [
  "clap",
  "fluent",
+ "uucore 0.12.0",
+]
+
+[[package]]
+name = "uu_basenc"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c9841519e45b7dd994f5d8d40dc31164759e1476f52935f5d5fca8bd2fd7b79"
+dependencies = [
+ "clap",
+ "fluent",
+ "uu_base32",
  "uucore 0.12.0",
 ]
 
@@ -5153,6 +5198,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_more"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf56076f34c0d91d2821986c5393d31d57542f944f93c466530b62dd8909c134"
+dependencies = [
+ "clap",
+ "crossterm",
+ "fluent",
+ "uucore 0.12.0",
+]
+
+[[package]]
 name = "uu_mv"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5286,6 +5343,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_pr"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a86126634ad64f323a8e2d487fc7fa3b92b1b251a08eef631c113ae57d112678"
+dependencies = [
+ "clap",
+ "fluent",
+ "itertools 0.15.0",
+ "memchr",
+ "regex",
+ "thiserror 2.0.20",
+ "uucore 0.12.0",
+]
+
+[[package]]
 name = "uu_printenv"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5394,10 +5466,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_sha224sum"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "961716db2eefd48b450fd837881b110568de7761acbfe4a92abe49b3f5899253"
+dependencies = [
+ "clap",
+ "fluent",
+ "uu_checksum_common",
+ "uucore 0.12.0",
+]
+
+[[package]]
 name = "uu_sha256sum"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c065f8ea49bf27afcdbb9d5c28d94c5690955e89f2b9076c88e03faa3c84d183"
+dependencies = [
+ "clap",
+ "fluent",
+ "uu_checksum_common",
+ "uucore 0.12.0",
+]
+
+[[package]]
+name = "uu_sha384sum"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a5a28caaed1f09d6980287a77d522f8192378c36c98a23293085b3a4c597d22"
 dependencies = [
  "clap",
  "fluent",
@@ -5532,6 +5628,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_stty"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d809f81fbc6bc416761cc27518b49448ea68640feb953a6c7231f727652b75e"
+dependencies = [
+ "cfg_aliases",
+ "clap",
+ "fluent",
+ "nix 0.31.3",
+ "uucore 0.12.0",
+]
+
+[[package]]
 name = "uu_sum"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5554,6 +5663,23 @@ dependencies = [
  "rustix",
  "uucore 0.12.0",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "uu_tac"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76ec0679c585e00258cd3c70fca14ad1d5220c02c7fdb56aa513003f6fdd73ba"
+dependencies = [
+ "clap",
+ "fluent",
+ "libc",
+ "memchr",
+ "memmap2",
+ "regex",
+ "tempfile",
+ "thiserror 2.0.20",
+ "uucore 0.12.0",
 ]
 
 [[package]]
@@ -5648,6 +5774,17 @@ name = "uu_true"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb7a03ae2661faa57115019fe88ce91b6d8143c6b76930460b06a949de8f8aaa"
+dependencies = [
+ "clap",
+ "fluent",
+ "uucore 0.12.0",
+]
+
+[[package]]
+name = "uu_truncate"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1991acfea078be5657c18bab731d77d083bb7facf5157c2567e53f2a6d0b9727"
 dependencies = [
  "clap",
  "fluent",

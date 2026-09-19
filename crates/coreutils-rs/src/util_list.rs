@@ -98,6 +98,15 @@ const UTILS: &[(&str, &str)] = &[
     ("cksum", "uu_cksum"),
     ("chroot", "uu_chroot"),
     ("hostname", "uu_hostname"),
+    ("b2sum", "uu_b2sum"),
+    ("basenc", "uu_basenc"),
+    ("pr", "uu_pr"),
+    ("sha224sum", "uu_sha224sum"),
+    ("sha384sum", "uu_sha384sum"),
+    ("stty", "uu_stty"),
+    ("tac", "uu_tac"),
+    ("truncate", "uu_truncate"),
+    ("more", "uu_more"),
     // Not coreutils — GNU findutils, a separate upstream project, also
     // with its own official uutils Rust port (the `findutils` crate,
     // vendored the same way as the `uu_*` crates above). No locales dir

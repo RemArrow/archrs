@@ -830,6 +830,41 @@ rather than an exhaustive, fixed checklist the way Phases 1-4 were.
       both a real `chroot(2)` syscall succeeding and the chrooted
       process's `hostname` correctly reading the (unchanged, since
       `chroot` only rebinds `/`) UTS namespace hostname.
+- [x] `b2sum`, `basenc`, `pr`, `sha224sum`, `sha384sum`, `tac`,
+      `truncate` — seven more official `uu_*` crates that had simply
+      been missed when the rest of coreutils was vendored in Phase 2;
+      no new pattern, just closing that gap. All seven verified
+      byte-identical against the real binaries (`b2sum`, `basenc
+      --base64`, `pr`, `sha224sum`, `sha384sum`, `tac`, and `truncate
+      -s`).
+- [x] `stty`, `more` — two more `uu_*` crates, both real, functioning
+      implementations, but each with a real, visible fidelity gap
+      against the traditional tool it replaces (younger corners of the
+      uutils project than `uu_ls`/`uu_cat`-era crates) — found by
+      testing against a real pty (`python3`'s `pty.fork()` +
+      `TIOCSWINSZ`, since a plain redirected pipe reports `rows 0;
+      columns 0` for both and hides the actual gaps) rather than a
+      redirected-pipe diff:
+      - `stty -a`'s termios flag listing omits a handful of legacy
+        flags real GNU `stty` prints (`-iuclc`, `-ofill`, `-xcase`)
+        and prints one it shouldn't (`-tandem`, a legacy alias GNU
+        `stty -a` doesn't show). Everything else — speed, rows/
+        columns, control characters, and the large majority of the
+        termios flag table — matched exactly.
+      - `more` renders as a full alternate-screen TUI pager (entering/
+        leaving with `\e[?1049h`/`\e[?1049l`, matching how this
+        crate's own `less`/`minus`-based `less_cmd.rs` behaves) with a
+        `filename (N%)` status line, instead of traditional BSD/
+        util-linux `more`'s simpler in-place `--More--(N%)` prompt
+        with no alternate screen. Still a working, usable pager
+        (confirmed paging and quitting both work over a real pty) —
+        just a different, more `less`-like UI than classic `more`.
+      Neither gap patched — both are real limitations of the vendored
+      crates themselves, not something this thin dispatch layer
+      introduced, and re-implementing either tool's rendering/flag
+      table ourselves would mean forking a third-party crate rather
+      than vendoring it. Documented rather than chased further, same
+      standard as `free -h`'s rounding gap and `ps aux`'s `%CPU`.
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

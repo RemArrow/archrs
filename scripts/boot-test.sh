@@ -87,6 +87,10 @@ echo "hello from archrs vm" > /tmp/marker.txt
 echo "ARCHRS-BOOT-TEST: file roundtrip: $(cat /tmp/marker.txt)"
 echo "ARCHRS-BOOT-TEST: diff result: $(printf 'a\nb\n' > /tmp/d1.txt; printf 'a\nc\n' > /tmp/d2.txt; diff /tmp/d1.txt /tmp/d2.txt | tr '\n' '|')"
 echo "ARCHRS-BOOT-TEST: dmesg first line: $(dmesg | head -1)"
+echo "ARCHRS-BOOT-TEST: hostname: $(hostname)"
+echo "ARCHRS-BOOT-TEST: chroot result: $(chroot / hostname 2>&1)"
+chroot / true
+echo "ARCHRS-BOOT-TEST: chroot exit code: $?"
 echo "ARCHRS-BOOT-TEST: all checks complete, powering off"
 kill -USR2 1
 sleep 5
@@ -138,6 +142,7 @@ check "ARCHRS-BOOT-TEST: file roundtrip: hello from archrs vm"
 check "ARCHRS-BOOT-TEST: awk result: 2"
 check "ARCHRS-BOOT-TEST: diff result: 2c2|< b|---|> c|"
 check "ARCHRS-BOOT-TEST: dmesg first line: [    0.000000] Linux version"
+check "ARCHRS-BOOT-TEST: chroot exit code: 0"
 check "archrs-init: powering off"
 check "reboot: Power down"
 

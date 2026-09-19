@@ -145,6 +145,8 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "pinky" => uu_pinky::uumain(args),
         "sum" => uu_sum::uumain(args),
         "cksum" => uu_cksum::uumain(args),
+        "chroot" => uu_chroot::uumain(args),
+        "hostname" => uu_hostname::uumain(args),
         "find" => {
             let owned = run_findutils_str_args(args);
             let strs: Vec<&str> = owned.iter().map(String::as_str).collect();

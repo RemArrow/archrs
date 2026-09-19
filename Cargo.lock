@@ -876,6 +876,7 @@ dependencies = [
  "uu_chgrp",
  "uu_chmod",
  "uu_chown",
+ "uu_chroot",
  "uu_cksum",
  "uu_comm",
  "uu_cp",
@@ -899,6 +900,7 @@ dependencies = [
  "uu_groups",
  "uu_head",
  "uu_hostid",
+ "uu_hostname",
  "uu_id",
  "uu_install",
  "uu_join",
@@ -4650,6 +4652,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_chroot"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49adacec23fa585c6677db654e10a33ec11319c1e8b4f1391c9628ea5d66aeea"
+dependencies = [
+ "clap",
+ "fluent",
+ "rustix",
+ "thiserror 2.0.20",
+ "uucore 0.12.0",
+]
+
+[[package]]
 name = "uu_cksum"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4952,6 +4967,18 @@ dependencies = [
  "fluent",
  "hostname",
  "rustix",
+ "uucore 0.12.0",
+]
+
+[[package]]
+name = "uu_hostname"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c160a28e366d2c1b63b75ea837ebc9be5d3e3901f1a1bb2d7ea44ec9c92d40b3"
+dependencies = [
+ "clap",
+ "fluent",
+ "hostname",
  "uucore 0.12.0",
 ]
 

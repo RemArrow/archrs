@@ -64,14 +64,17 @@ Confirmed, for real, everything the sandbox couldn't show:
   `reboot(2)` syscall itself succeeded* — the kernel's own log confirms it
   (`reboot: Power down`) — closing the other EPERM gap from the `unshare`
   test, where reboot(2) never actually completed.
-- Re-run after adding `diff`/`cmp`/`dmesg` (Phase 5): `diff` correctly
-  diffed two real files written by the init-spawned script, and `dmesg`
-  — which needs real `CAP_SYSLOG`/`CAP_SYS_ADMIN` to open `/dev/kmsg`
-  at all, gated by `kernel.dmesg_restrict` independently of the file's
-  own permission bits — read and correctly formatted genuine kernel
-  ring-buffer messages (`[    0.000000] Linux version ...`) from this
-  real boot. Another real capability the `unshare` sandbox has no way
-  to grant or verify at all.
+- Re-run after adding `diff`/`cmp`/`dmesg`/`chroot`/`hostname`
+  (Phase 5): `diff` correctly diffed two real files written by the
+  init-spawned script; `dmesg` — which needs real
+  `CAP_SYSLOG`/`CAP_SYS_ADMIN` to open `/dev/kmsg` at all, gated by
+  `kernel.dmesg_restrict` independently of the file's own permission
+  bits — read and correctly formatted genuine kernel ring-buffer
+  messages (`[    0.000000] Linux version ...`); `chroot` made a real
+  `chroot(2)` syscall succeed (needs real `CAP_SYS_CHROOT`) and the
+  chrooted process's own `hostname` correctly read back the kernel's
+  UTS-namespace hostname. Three more real capabilities the `unshare`
+  sandbox has no way to grant or verify at all.
 
 This is real evidence archrs can be a system's actual boot init and
 userland, not just a set of individually-correct binaries — but it's one
@@ -813,6 +816,20 @@ rather than an exhaustive, fixed checklist the way Phases 1-4 were.
       Not implemented: `-T`/`--ctime` (wall-clock timestamps), `-l`/
       `-f` (level/facility filtering), `-c` (clear-after-read),
       `--follow`, colorized/JSON output.
+- [x] `chroot`, `hostname` — two more real, official `uu_*` crates
+      (`uu_chroot`, `uu_hostname`) that simply hadn't been picked up
+      yet, same as every other coreutils entry in Phase 2 — no new
+      pattern here.
+      `hostname` verified byte-identical against the real binary.
+      `chroot(2)` needs `CAP_SYS_CHROOT` (root, normally): confirmed
+      real `chroot` fails identically unprivileged on this dev machine
+      (`Operation not permitted`, exit 125 both — wording differs
+      slightly, `uu_chroot`'s own message text, not patched); verified
+      for real as root via the boot test, which now runs `chroot /
+      hostname` and `chroot / true` from the init-spawned session —
+      both a real `chroot(2)` syscall succeeding and the chrooted
+      process's `hostname` correctly reading the (unchanged, since
+      `chroot` only rebinds `/`) UTS namespace hostname.
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

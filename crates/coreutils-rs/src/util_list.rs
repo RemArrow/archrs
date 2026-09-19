@@ -96,6 +96,8 @@ const UTILS: &[(&str, &str)] = &[
     ("pinky", "uu_pinky"),
     ("sum", "uu_sum"),
     ("cksum", "uu_cksum"),
+    ("chroot", "uu_chroot"),
+    ("hostname", "uu_hostname"),
     // Not coreutils — GNU findutils, a separate upstream project, also
     // with its own official uutils Rust port (the `findutils` crate,
     // vendored the same way as the `uu_*` crates above). No locales dir

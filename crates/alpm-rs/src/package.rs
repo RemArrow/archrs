@@ -20,6 +20,15 @@ pub struct Package {
     pub provides: Vec<String>,
     pub replaces: Vec<String>,
     pub groups: Vec<String>,
+    /// Config file paths (relative to the install root, e.g.
+    /// `etc/foo.conf`) pacman should preserve/back up on removal or
+    /// upgrade if the installed copy was locally modified. `.PKGINFO`
+    /// stores just the path (`backup = etc/foo.conf`); the local db's
+    /// `desc` file additionally stores a hash of the *pristine*
+    /// (just-installed) file per path (`etc/foo.conf<TAB><md5>`) to
+    /// later detect local edits — not modeled here, since nothing in
+    /// this project reads it back yet (no `pacman -Qkk`-equivalent).
+    pub backup: Vec<String>,
     pub build_date: Option<i64>,
     pub install_date: Option<i64>,
     pub reason: Option<String>,
@@ -70,6 +79,14 @@ pub fn parse_desc(text: &str) -> Package {
             "PROVIDES" => pkg.provides = values,
             "REPLACES" => pkg.replaces = values,
             "GROUPS" => pkg.groups = values,
+            // Local db's own format: `path<TAB>hash` per line; only
+            // the path is kept, matching this struct's own doc note.
+            "BACKUP" => {
+                pkg.backup = values
+                    .into_iter()
+                    .map(|v| v.split('\t').next().unwrap_or(&v).to_string())
+                    .collect()
+            }
             "BUILDDATE" => pkg.build_date = joined.parse().ok(),
             "INSTALLDATE" => pkg.install_date = joined.parse().ok(),
             "REASON" => pkg.reason = Some(joined),
@@ -104,6 +121,7 @@ pub fn parse_pkginfo(text: &str) -> Package {
     let mut provides = Vec::new();
     let mut replaces = Vec::new();
     let mut groups = Vec::new();
+    let mut backup = Vec::new();
 
     for line in text.lines() {
         if line.starts_with('#') || line.trim().is_empty() {
@@ -133,6 +151,7 @@ pub fn parse_pkginfo(text: &str) -> Package {
             "provides" => provides.push(value),
             "replaces" => replaces.push(value),
             "group" => groups.push(value),
+            "backup" => backup.push(value),
             _ => {} // xdata, checkdepend, etc. — not tracked yet
         }
     }
@@ -145,6 +164,7 @@ pub fn parse_pkginfo(text: &str) -> Package {
     pkg.provides = provides;
     pkg.replaces = replaces;
     pkg.groups = groups;
+    pkg.backup = backup;
     pkg
 }
 
@@ -198,6 +218,9 @@ pub fn write_pkginfo(pkg: &Package, packager: &str, build_date: i64, size: u64) 
     }
     for dep in &pkg.makedepends {
         out.push_str(&format!("makedepend = {dep}\n"));
+    }
+    for path in &pkg.backup {
+        out.push_str(&format!("backup = {path}\n"));
     }
     out
 }
@@ -310,7 +333,11 @@ makedepend = uasm
             arch: Some("x86_64".to_string()),
             licenses: vec!["MIT".to_string()],
             depends: vec!["glibc".to_string()],
+            optdepends: vec!["curl: for network features".to_string()],
             provides: vec!["hello-cmd".to_string()],
+            replaces: vec!["hello-old".to_string()],
+            groups: vec!["base-devel".to_string()],
+            backup: vec!["etc/hello.conf".to_string()],
             ..Package::default()
         };
         let text = write_pkginfo(&pkg, "archrs <archrs@localhost>", 1_700_000_000, 4096);
@@ -323,7 +350,11 @@ makedepend = uasm
         assert_eq!(parsed.arch, pkg.arch);
         assert_eq!(parsed.licenses, pkg.licenses);
         assert_eq!(parsed.depends, pkg.depends);
+        assert_eq!(parsed.optdepends, pkg.optdepends);
         assert_eq!(parsed.provides, pkg.provides);
+        assert_eq!(parsed.replaces, pkg.replaces);
+        assert_eq!(parsed.groups, pkg.groups);
+        assert_eq!(parsed.backup, pkg.backup);
         assert_eq!(parsed.build_date, Some(1_700_000_000));
         assert_eq!(parsed.size, Some(4096));
     }

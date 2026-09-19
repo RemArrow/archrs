@@ -137,7 +137,7 @@ pub fn extract_package(
         installed_paths.push(recorded);
     }
 
-    write_local_desc(&pkg_dir, pkg, reason)?;
+    write_local_desc(&pkg_dir, pkg, reason, root)?;
     write_local_files(&pkg_dir, &installed_paths)?;
 
     Ok(installed_paths)
@@ -151,7 +151,12 @@ fn copy_entry_to<R: Read>(entry: &mut tar::Entry<R>, dest: &Path) -> Result<(), 
     fs::write(dest, buf).map_err(|e| InstallError::WriteDb(dest.to_path_buf(), e))
 }
 
-fn write_local_desc(pkg_dir: &Path, pkg: &Package, reason: &str) -> Result<(), InstallError> {
+fn write_local_desc(
+    pkg_dir: &Path,
+    pkg: &Package,
+    reason: &str,
+    root: &Path,
+) -> Result<(), InstallError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -196,6 +201,8 @@ fn write_local_desc(pkg_dir: &Path, pkg: &Package, reason: &str) -> Result<(), I
         field!("SIZE", size);
     }
     list_field!("LICENSE", pkg.licenses);
+    list_field!("REPLACES", pkg.replaces);
+    list_field!("GROUPS", pkg.groups);
     list_field!("DEPENDS", pkg.depends);
     list_field!("OPTDEPENDS", pkg.optdepends);
     list_field!("CONFLICTS", pkg.conflicts);
@@ -206,6 +213,29 @@ fn write_local_desc(pkg_dir: &Path, pkg: &Package, reason: &str) -> Result<(), I
     // /var/lib/pacman/local/*/desc files.
     if reason == "dependency" {
         field!("REASON", "1");
+    }
+    if !pkg.backup.is_empty() {
+        // Real pacman's local db stores `path<TAB>md5` per line — a
+        // hash of the just-extracted (pristine) file, checked later
+        // against the live file to detect local edits. Best-effort:
+        // a path that somehow didn't get extracted just contributes
+        // no `%BACKUP%` entry for itself rather than failing the
+        // whole install over it.
+        let lines: Vec<String> = pkg
+            .backup
+            .iter()
+            .filter_map(|path| {
+                let hash = crate::verify::digest_hex_for(
+                    &root.join(path),
+                    crate::verify::ChecksumKind::Md5,
+                )
+                .ok()?;
+                Some(format!("{path}\t{hash}"))
+            })
+            .collect();
+        if !lines.is_empty() {
+            out.push_str(&format!("%BACKUP%\n{}\n\n", lines.join("\n")));
+        }
     }
     field!("VALIDATION", "sha256");
 

@@ -118,8 +118,15 @@
 //!   fix and rebuilding, that this was a real **hard failure** without
 //!   it (`extracting zip archive: i/o error: Is a directory`), not
 //!   just wasted work.
+//! - `downgrade`: real `optdepends=`/`backup=` entries. `alpm_rs`
+//!   already fully modeled `optdepends`/`replaces`/`groups` (real
+//!   `.PKGINFO` fields, just never read from a PKGBUILD by this tool
+//!   at all); `backup=` was a deeper gap — no support anywhere in the
+//!   pipeline, not even a `Package` field, before this. Both now flow
+//!   through end to end, including real MD5-hash-based local-db
+//!   `%BACKUP%` tracking matching real pacman's own format exactly.
 //!
-//! All eight built (or, for `1password-cli`, correctly got as far as
+//! All nine built (or, for `1password-cli`, correctly got as far as
 //! a real `gpg` "no public key" error — matching what real makepkg
 //! itself would report without that key already trusted), installed
 //! via `pacman-rs -U`, and ran/resolved correctly afterward. `.install`
@@ -166,8 +173,12 @@ const VARS: &[&str] = &[
     "license",
     "depends",
     "makedepends",
+    "optdepends",
     "provides",
     "conflicts",
+    "replaces",
+    "groups",
+    "backup",
     "source",
     "b2sums",
     "sha512sums",
@@ -707,8 +718,12 @@ const SPLIT_METADATA_VARS: &[&str] = &[
     "url",
     "license",
     "depends",
+    "optdepends",
     "provides",
     "conflicts",
+    "replaces",
+    "groups",
+    "backup",
     "install",
 ];
 
@@ -986,9 +1001,13 @@ fn build_package_meta(
         arch: Some(carch.to_string()),
         licenses: field("license"),
         depends: field("depends"),
+        optdepends: field("optdepends"),
         makedepends: pkgbuild.array("makedepends").to_vec(),
         provides: field("provides"),
         conflicts: field("conflicts"),
+        replaces: field("replaces"),
+        groups: field("groups"),
+        backup: field("backup"),
         ..Package::default()
     }
 }

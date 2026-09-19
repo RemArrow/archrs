@@ -811,6 +811,48 @@ destination/method rather than the generic default).
       `epoch=1` version `1:1.95.104-1`), installed via `pacman-rs -U`,
       and the installed browser binary ran for real (`brave
       --version` → `Brave Browser 153.1.95.104`).
+
+**`optdepends=`/`replaces=`/`groups=`/`backup=` (2026-09-19).**
+`alpm_rs::package::Package` and `write_pkginfo` already fully modeled
+`optdepends`/`replaces`/`groups` — real fields, real `.PKGINFO`
+support, just never actually read from a PKGBUILD by `makepkg-rs` at
+all, a real, previously undiscovered gap for what are all genuinely
+common PKGBUILD fields (`optdepends` especially — seen in several of
+the real packages already tested this phase). `backup=` was a deeper
+gap: no support anywhere in the pipeline at all, not even a field on
+`Package`. Found a real, small package exercising both `optdepends`
+and `backup` together: `downgrade` (a small, real, popular bash-script
+utility — `optdepends=('sudo: ...')`, `backup=(etc/xdg/downgrade/
+downgrade.conf)`).
+- [x] `optdepends=`/`replaces=`/`groups=` — `makepkg-rs` now reads all
+      three from the PKGBUILD (including per-sub-package overrides for
+      split packages, added to `SPLIT_METADATA_VARS`) and threads them
+      into the built `Package`. Also caught, while touching this same
+      code path, that `alpm_rs::install::extract_package`'s *local db*
+      writer (`write_local_desc`, a different, separate write path
+      from `.PKGINFO`) was missing `%REPLACES%`/`%GROUPS%` entirely —
+      fixed alongside `%OPTDEPENDS%`'s already-existing support.
+      Verified for real against `downgrade`: built package's
+      `.PKGINFO` correctly shows `optdepend = sudo: for installation
+      via sudo`; installed via `pacman-rs -U`, and the real script ran
+      correctly afterward.
+- [x] `backup=()` — added a `Package.backup: Vec<String>` field (none
+      existed before), `.PKGINFO` read/write support
+      (`parse_pkginfo`/`write_pkginfo`), and real local-db tracking:
+      `extract_package` now computes an MD5 hash of each backed-up
+      file *after* extraction (the "pristine" copy pacman later
+      compares against to detect local edits) and writes a real
+      `%BACKUP%\npath<TAB>hash` block into the local db's `desc` file
+      — the same format and hash algorithm real pacman uses. Not
+      wired up: an actual `pacman -Qkk`-style consumer that reads
+      this back to report local modifications — the data model is
+      complete and correct, but nothing yet acts on it, since no
+      command in this project currently needs to.
+      Verified for real against `downgrade`: `.PKGINFO` correctly
+      shows `backup = etc/xdg/downgrade/downgrade.conf`; after
+      installing, the local db's `desc` file has a real `%BACKUP%`
+      entry whose hash is byte-for-byte identical to a direct
+      `md5sum` of the actually-installed config file.
 - [x] `which` and `patch` — the remaining small, well-scoped
       base-devel-adjacent utilities PKGBUILDs commonly need. `which`
       vendors the `which` crate (real cross-platform `PATH` lookup);

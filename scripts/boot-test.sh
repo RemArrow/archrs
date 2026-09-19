@@ -98,6 +98,10 @@ echo "written through tmpfs" > /mnt/tmpfstest/probe.txt
 echo "ARCHRS-BOOT-TEST: tmpfs write: $(cat /mnt/tmpfstest/probe.txt)"
 umount /mnt/tmpfstest
 echo "ARCHRS-BOOT-TEST: tmpfs unmounted: $(mount | grep -c tmpfstest)"
+echo "ARCHRS-BOOT-TEST: ss listener: $(ss -tl | grep -c LISTEN || true)"
+echo "ARCHRS-BOOT-TEST: ip addr:"
+ip addr | tr '\n' '|'
+echo
 echo "ARCHRS-BOOT-TEST: all checks complete, powering off"
 kill -USR2 1
 sleep 5
@@ -152,6 +156,7 @@ check "ARCHRS-BOOT-TEST: dmesg first line: [    0.000000] Linux version"
 check "ARCHRS-BOOT-TEST: chroot exit code: 0"
 check "ARCHRS-BOOT-TEST: tmpfs write: written through tmpfs"
 check "ARCHRS-BOOT-TEST: tmpfs unmounted: 0"
+check "1: lo: <LOOPBACK>"
 check "archrs-init: powering off"
 check "reboot: Power down"
 

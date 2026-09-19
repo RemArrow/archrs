@@ -191,4 +191,10 @@ const UTILS: &[(&str, &str)] = &[
     // elsewhere for ps/free/uptime), no new engine needed — see
     // ss_cmd.rs.
     ("ss", "archrs-native"),
+    // `ip` (iproute2) — real rtnetlink RTM_GETLINK/RTM_GETADDR dump
+    // requests via netlink-sys/netlink-packet-core/netlink-packet-route
+    // (the same crates rtnetlink itself is built on, used directly and
+    // fully synchronously instead of through its async wrapper) — see
+    // ip_cmd.rs.
+    ("ip", "archrs-native"),
 ];

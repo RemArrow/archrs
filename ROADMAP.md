@@ -933,7 +933,7 @@ Any of the above is a reasonable future phase on its own if a real
 need for it shows up — this boundary reflects "not needed to call the
 userland complete," not "impossible."
 
-### Phase 6 — networking visibility (in progress)
+### Phase 6 — networking visibility (complete)
 Opened to pick up the first item from Phase 5's closing boundary list:
 "networking beyond `curl`/`ping`". Rather than `ip`/`ifconfig` (which
 would need real netlink `rtnetlink` handling — a bigger, separate
@@ -972,9 +972,56 @@ started with the more self-contained half of that gap:
       Not implemented: raw/packet sockets, `-e`/`-i`/`-o` (extended
       TCP/timer info), filter expressions.
 
-Still open for this phase: `ip`/`ifconfig` (real interface
-configuration — needs a netlink `rtnetlink` crate, a scope decision on
-the same footing as `dig`'s async dependency, not yet made).
+- [x] `ip` (iproute2) — real interface/address listing via genuine
+      `rtnetlink` (`NETLINK_ROUTE`) requests, not `/proc` scraping:
+      no `/proc` file exposes interface flags, hardware addresses, or
+      address scopes the way netlink does. Resolved the open question
+      from `ss`'s own entry above (a netlink dependency, like `dig`'s
+      async one, needing a real decision) by finding a fully
+      synchronous path: `netlink-sys` (plain blocking `AF_NETLINK`
+      socket, none of its optional `tokio`/`mio`/`async-io` features
+      enabled), `netlink-packet-core` (the generic netlink envelope),
+      and `netlink-packet-route` (the actual `RTM_GETLINK`/
+      `RTM_GETADDR` message/attribute types) — the same crates
+      `rtnetlink` itself is built on, used directly instead of through
+      its async wrapper. The request/multipart-dump/parse loop itself
+      (`netlink_dump` in `ip_cmd.rs`) is hand-rolled, since `rtnetlink`
+      only exposes that logic through its async API.
+      `ip addr`/`ip link` (also `ip a`/`ip l`, and abbreviation-
+      matched the way real `ip` itself matches object names by
+      prefix) list every interface with its flags, MTU, and hardware
+      address, and every address with its prefix length and scope.
+      Verified against real `ip addr`/`ip link` on this dev machine:
+      identical interfaces (by index and name), flags (bit-for-bit via
+      `LinkFlags`, the same `IFF_*` kernel constants real `ip`
+      decodes), MTU, and every hardware/IPv4/IPv6 address with its
+      correct prefix length — checked address-by-address, not
+      spot-checked. Address scope names are remapped to real `ip`'s
+      own display table (`RT_SCOPE_UNIVERSE` → `global`, matching
+      exactly) rather than left as the kernel's raw scope name.
+      Verified a second time somewhere the first check couldn't reach:
+      the real boot test's genuinely separate environment (its own net
+      namespace via a real boot, not just a different process on the
+      same host) — confirmed `ip addr` there correctly shows only
+      `lo`, with `<LOOPBACK>` but *not* `UP` (accurate: this minimal
+      boot has no `systemd-networkd`/`NetworkManager` bringing
+      interfaces up, so genuinely nothing is configured yet) and zero
+      addresses — a real, correctly-reported "nothing configured"
+      state, not a bug.
+      Not implemented: any write operation (`ip link set`, `ip addr
+      add`, `ip route` at all — this phase is visibility only,
+      matching `ss`), `ip neigh`/`ip rule`, JSON output, filtering by
+      device name.
+
+This closes out the concrete work opened for Phase 6: both halves of
+"networking beyond `curl`/`ping`" (socket state via `ss`, interface/
+address state via `ip`) are done, verified, and — for the two pieces
+needing a genuinely different environment to prove (`dmesg`, `mount`,
+and now `ip` in a real, unconfigured network namespace) — exercised by
+the real boot test rather than just the dev host. `ip route`/`ip
+neigh`/any write operation remain open if a real need for them shows
+up, on the same "not needed yet, not impossible" footing as Phase 5's
+own closing boundary.
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

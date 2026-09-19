@@ -525,13 +525,15 @@ bash replacement, makepkg equivalent, build tooling.
       Not implemented: context/normal diff formats, fuzzy matching for
       drifted line numbers, `-R` (reverse), `which -s` (silent).
 
-### Phase 5 — additional userland coverage (in progress)
+### Phase 5 — additional userland coverage (complete)
 All four originally-planned phases are functionally complete (see above).
-This phase is what comes after: closing more real day-to-day gaps in
+This phase was what came after: closing more real day-to-day gaps in
 `coreutils-rs`, following the same standard set throughout this project
 — vendor a real crate when one exists rather than hand-roll, verify
 against the real tool being replaced, document what's out of scope —
-rather than an exhaustive, fixed checklist the way Phases 1-4 were.
+rather than an exhaustive, fixed checklist the way Phases 1-4 were. See
+the closing note at the end of this section for where the deliberate
+scope boundary landed.
 
 - [x] `awk` — AWK is its own full programming language (patterns,
       actions, control flow, user functions, associative arrays), so
@@ -865,6 +867,71 @@ rather than an exhaustive, fixed checklist the way Phases 1-4 were.
       table ourselves would mean forking a third-party crate rather
       than vendoring it. Documented rather than chased further, same
       standard as `free -h`'s rounding gap and `ps aux`'s `%CPU`.
+- [x] `mount`/`umount` — real `mount(2)`/`umount2(2)` via the `nix`
+      crate's `mount` module: the exact same crate and `MsFlags`
+      bitflags `archrs-init` already uses for its own boot-time
+      `/proc`/`/sys`/`/dev` mounts, so this is reusing an
+      already-proven dependency rather than a new vendoring decision
+      or a second hand-rolled `libc::mount` FFI call.
+      `mount` with no arguments lists current mounts by reading
+      `/proc/self/mounts` and reformatting each line as real `mount`'s
+      default `source on target type fstype (options)` output —
+      verified byte-identical against the real binary's listing.
+      `mount SOURCE TARGET [-t FSTYPE] [-o OPTIONS]` translates the
+      common comma-separated `-o` flags (`ro`/`rw`, `noexec`/`exec`,
+      `nosuid`/`suid`, `nodev`/`dev`, `noatime`/`atime`/`relatime`,
+      `sync`/`async`, `remount`, `bind`/`rbind`, `private`/`shared`/
+      `slave`/`unbindable`) into `MsFlags`, passing anything else
+      (e.g. tmpfs's `size=100m`) through verbatim as filesystem data —
+      the same split real `mount` itself makes. `umount TARGET`
+      (`-f`/`-l`) wraps `umount2`.
+      Real mounts need `CAP_SYS_ADMIN`, so — same situation as
+      `dmesg`/`chroot` — only genuinely verifiable as root: confirmed
+      unprivileged failure matches real `mount`/`umount` (EPERM; exact
+      wording differs, since real `mount` is a setuid binary doing its
+      own pre-check with a friendlier message, while this calls
+      `mount(2)` directly and reports the raw errno), then verified
+      for real via the boot test, which now mounts a real `tmpfs` with
+      `-o size=1m`, confirms it shows up correctly in `mount`'s own
+      listing (`tmpfs on /mnt/tmpfstest type tmpfs (rw,relatime,
+      size=1024k,...)`), writes and reads a file through it, and
+      unmounts it cleanly — all as the init-spawned session's genuine
+      root.
+      Not implemented: `/etc/fstab` (`mount -a`, mount-by-label/UUID),
+      loop-device auto-setup for mounting image files (real `mount`
+      transparently `losetup`s these), `--bind`'s single-argument
+      short form.
+
+Phase 5 stops here as a deliberately-scoped milestone rather than
+petering out mid-utility: every remaining official `uu_*` crate that
+fits this project's existing vendor-and-wrap pattern has now been
+picked up, `diff`/`cmp`/`dmesg`/`chroot`/`mount`/`umount` closed the
+biggest remaining everyday-userland and system-administration gaps,
+and the two hardest-to-verify additions (`dmesg`, `mount`, both needing
+real root) are now permanent, automated regression checks in
+`scripts/boot-test.sh` rather than one-off manual tests. What's
+deliberately still outside this phase's scope, not from oversight:
+- **Interactive/curses-heavy tools** (`top`, a real full-screen `vim`/
+  `nano`) — meaningfully bigger projects in their own right, not a
+  natural extension of the CLI-utility pattern used throughout.
+- **Networking beyond `curl`/`ping`** (`ip`/`ifconfig`, `ss`/
+  `netstat`) — real coverage needs netlink socket handling, a
+  different problem shape than everything vendored so far.
+- **Device/hardware enumeration** (`lsblk`, `lspci`, `lsusb`) — needs
+  vendor/device ID databases (`pci.ids`/`usb.ids`) this project has no
+  copy of and no clear source to vendor cleanly.
+- **Privilege-management tools** (`su`, `sudo`, `passwd`,
+  `useradd`/`usermod`) — deliberately out of scope for the same reason
+  `crond`/`crontab` stayed single-user: reimplementing privilege-
+  dropping and credential handling ourselves, without the security
+  scrutiny that code deserves, isn't a reasonable trade.
+- **Kernel module loading** (`insmod`/`rmmod`/`modprobe`) — not
+  exercised by anything this project's own boot/package-management
+  path actually needs yet.
+
+Any of the above is a reasonable future phase on its own if a real
+need for it shows up — this boundary reflects "not needed to call the
+userland complete," not "impossible."
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

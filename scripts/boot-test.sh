@@ -91,6 +91,13 @@ echo "ARCHRS-BOOT-TEST: hostname: $(hostname)"
 echo "ARCHRS-BOOT-TEST: chroot result: $(chroot / hostname 2>&1)"
 chroot / true
 echo "ARCHRS-BOOT-TEST: chroot exit code: $?"
+mkdir -p /mnt/tmpfstest
+mount tmpfs /mnt/tmpfstest -t tmpfs -o size=1m
+echo "ARCHRS-BOOT-TEST: tmpfs mounted: $(mount | grep tmpfstest)"
+echo "written through tmpfs" > /mnt/tmpfstest/probe.txt
+echo "ARCHRS-BOOT-TEST: tmpfs write: $(cat /mnt/tmpfstest/probe.txt)"
+umount /mnt/tmpfstest
+echo "ARCHRS-BOOT-TEST: tmpfs unmounted: $(mount | grep -c tmpfstest)"
 echo "ARCHRS-BOOT-TEST: all checks complete, powering off"
 kill -USR2 1
 sleep 5
@@ -143,6 +150,8 @@ check "ARCHRS-BOOT-TEST: awk result: 2"
 check "ARCHRS-BOOT-TEST: diff result: 2c2|< b|---|> c|"
 check "ARCHRS-BOOT-TEST: dmesg first line: [    0.000000] Linux version"
 check "ARCHRS-BOOT-TEST: chroot exit code: 0"
+check "ARCHRS-BOOT-TEST: tmpfs write: written through tmpfs"
+check "ARCHRS-BOOT-TEST: tmpfs unmounted: 0"
 check "archrs-init: powering off"
 check "reboot: Power down"
 

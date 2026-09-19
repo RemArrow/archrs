@@ -181,4 +181,9 @@ const UTILS: &[(&str, &str)] = &[
     // `/dev/kmsg` record interface directly; no parser worth vendoring
     // — see dmesg_cmd.rs.
     ("dmesg", "archrs-native"),
+    // `mount`/`umount` (util-linux) — real mount(2)/umount2(2) via the
+    // `nix` crate, the same crate/flags archrs-init already uses for
+    // its own boot-time mounts — see mount_cmd.rs.
+    ("mount", "archrs-native"),
+    ("umount", "archrs-native"),
 ];

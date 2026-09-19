@@ -32,6 +32,7 @@ mod file_cmd;
 mod grep_cmd;
 mod gzip_cmd;
 mod less_cmd;
+mod mount_cmd;
 mod patch_cmd;
 mod ping_cmd;
 mod procps_cmd;
@@ -207,6 +208,8 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "diff" => diff_cmd::run_diff(args),
         "cmp" => diff_cmd::run_cmp(args),
         "dmesg" => dmesg_cmd::run(args),
+        "mount" => mount_cmd::run_mount(args),
+        "umount" => mount_cmd::run_umount(args),
         _ => return None,
     })
 }

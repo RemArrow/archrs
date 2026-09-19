@@ -860,6 +860,7 @@ dependencies = [
  "libc",
  "magic",
  "minus",
+ "nix 0.31.3",
  "patch-apply",
  "ping",
  "procfs",

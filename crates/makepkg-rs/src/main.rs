@@ -249,6 +249,102 @@ fn looks_like_url(s: &str) -> bool {
     s.contains("://")
 }
 
+/// A VCS `source=()` entry's real URL (`git+https://...` → strip the
+/// `git+`) plus an optional `#tag=`/`#branch=`/`#commit=` fragment —
+/// makepkg's own syntax for pinning a VCS source to something other
+/// than the default branch's tip.
+struct VcsSource {
+    clone_url: String,
+    checkout: Option<(String, String)>,
+}
+
+/// Real makepkg supports several VCS prefixes (`git+`, `svn+`, `hg+`,
+/// `bzr+`); only `git+` (and a bare `git://` URL, used by some
+/// PKGBUILDs — e.g. suckless upstream ones — without the `+` prefix
+/// since the scheme alone is already unambiguous) is implemented here,
+/// since that covers the overwhelming majority of real VCS-sourced AUR
+/// packages (`-git` split off from `-svn`/`-hg`/`-bzr` variants that
+/// exist but are rare in comparison).
+fn git_vcs_source(location: &str) -> Option<VcsSource> {
+    let (url_part, fragment) = match location.split_once('#') {
+        Some((u, f)) => (u, Some(f)),
+        None => (location, None),
+    };
+    let clone_url = url_part
+        .strip_prefix("git+")
+        .map(str::to_string)
+        .or_else(|| url_part.starts_with("git://").then(|| url_part.to_string()))?;
+    let checkout = fragment
+        .and_then(|f| f.split_once('='))
+        .map(|(k, v)| (k.to_string(), v.to_string()));
+    Some(VcsSource {
+        clone_url,
+        checkout,
+    })
+}
+
+/// Local checkout directory name for a git source: makepkg names it
+/// after the repo itself (the URL's last path segment, `.git` suffix
+/// stripped), not the full source entry — `git+https://.../dmenu`
+/// becomes `$srcdir/dmenu`, matching what these PKGBUILDs' own
+/// `cd $_pkgname`/`git -C $_pkgname` calls already assume.
+fn git_repo_name(clone_url: &str) -> String {
+    clone_url
+        .rsplit('/')
+        .next()
+        .unwrap_or(clone_url)
+        .trim_end_matches(".git")
+        .to_string()
+}
+
+fn clone_or_update_git(vcs: &VcsSource, dest: &Path) -> Result<()> {
+    if dest.is_dir() {
+        // Idempotent re-runs: a prior clone is already there and
+        // pkgver()'s own `git describe` doesn't need it refreshed for
+        // this project's purposes (no `--holdver`-equivalent to worry
+        // about either way).
+        return Ok(());
+    }
+    println!(
+        "makepkg-rs: cloning {} ...",
+        vcs.checkout
+            .as_ref()
+            .map(|(k, v)| format!("{} ({k}={v})", vcs.clone_url))
+            .unwrap_or_else(|| vcs.clone_url.clone())
+    );
+    let status = Command::new("git")
+        .arg("clone")
+        .arg("--recursive")
+        .arg(&vcs.clone_url)
+        .arg(dest)
+        .status()
+        .context("running git clone")?;
+    if !status.success() {
+        anyhow::bail!("git clone failed for {}", vcs.clone_url);
+    }
+    if let Some((kind, value)) = &vcs.checkout {
+        let target = match kind.as_str() {
+            "tag" => format!("refs/tags/{value}"),
+            "branch" => format!("origin/{value}"),
+            _ => value.clone(),
+        };
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(dest)
+            .arg("checkout")
+            .arg(target)
+            .status()
+            .context("running git checkout")?;
+        if !status.success() {
+            anyhow::bail!(
+                "git checkout of {kind}={value} failed for {}",
+                vcs.clone_url
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Splits a `filename::url` source entry (makepkg's "rename on
 /// download" syntax) into the destination filename and the URL,
 /// falling back to the URL's own last path segment when no `::` prefix
@@ -328,6 +424,25 @@ fn prepare_sources(startdir: &Path, srcdir: &Path, pkgbuild: &PkgBuild) -> Resul
 
     for (i, entry) in sources.iter().enumerate() {
         let (filename, location) = source_dest_and_url(entry);
+
+        // VCS sources (`git+https://...`, or a bare `git://...` some
+        // PKGBUILDs use directly) clone straight into `srcdir` as a
+        // working tree, not a single file to checksum/extract — a
+        // structurally different path from everything below.
+        if let Some(vcs) = git_vcs_source(&location) {
+            // An explicit `name::` prefix (from `source_dest_and_url`)
+            // names the checkout directory directly, same as real
+            // makepkg; otherwise it's derived from the repo URL.
+            let dir_name = if entry.contains("::") {
+                filename.clone()
+            } else {
+                git_repo_name(&vcs.clone_url)
+            };
+            let repo_dir = srcdir.join(dir_name);
+            clone_or_update_git(&vcs, &repo_dir)?;
+            continue;
+        }
+
         let dest = srcdir.join(&filename);
         let is_remote = looks_like_url(&location);
 
@@ -416,6 +531,41 @@ fn run_pkgbuild_function(
         anyhow::bail!("{func}() failed");
     }
     Ok(())
+}
+
+/// Runs a PKGBUILD's `pkgver()` function, if defined, and returns the
+/// version it computes — real makepkg's mechanism for VCS-sourced
+/// (`-git`/`-svn`/`-hg`) packages, whose real version (`git describe`,
+/// an `svn info` revision, etc.) can't be known until the source is
+/// actually checked out. Run with `$srcdir` as the working directory,
+/// matching every real `pkgver()` seen in practice (they all either
+/// `cd` into a source subdirectory themselves or use `git -C`), after
+/// `prepare_sources` has fetched everything but before `prepare()`/
+/// `build()` run — the same ordering real makepkg uses, since later
+/// steps (and the final package filename) need the real version.
+fn run_pkgver(startdir: &Path, srcdir: &Path, pkgbuild: &PkgBuild) -> Result<Option<String>> {
+    if !pkgbuild.has_fn("pkgver") {
+        return Ok(None);
+    }
+    println!("makepkg-rs: running pkgver()...");
+    let script = "source ./PKGBUILD 2>/dev/null; cd \"$srcdir\" && pkgver";
+    let output = bash_command()
+        .arg("-c")
+        .arg(script)
+        .current_dir(startdir)
+        .env("srcdir", srcdir)
+        .env("startdir", startdir)
+        .output()
+        .context("running pkgver()")?;
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    if !output.status.success() {
+        anyhow::bail!("pkgver() failed");
+    }
+    let ver = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if ver.is_empty() {
+        anyhow::bail!("pkgver() produced no output");
+    }
+    Ok(Some(ver))
 }
 
 /// Every entry `package_archive` writes for `pkgdir`'s own contents,
@@ -548,7 +698,7 @@ fn run() -> Result<()> {
         .scalar("pkgname")
         .context("PKGBUILD has no pkgname")?
         .to_string();
-    let ver = pkgbuild
+    let mut ver = pkgbuild
         .scalar("pkgver")
         .context("PKGBUILD has no pkgver")?
         .to_string();
@@ -566,6 +716,12 @@ fn run() -> Result<()> {
     fs::create_dir_all(&pkgdir)?;
 
     prepare_sources(&startdir, &srcdir, &pkgbuild)?;
+    if let Some(computed) = run_pkgver(&startdir, &srcdir, &pkgbuild)? {
+        if computed != ver {
+            println!("makepkg-rs: pkgver() changed version: {ver} -> {computed}");
+        }
+        ver = computed;
+    }
     run_pkgbuild_function(&startdir, &srcdir, &pkgdir, &pkgbuild, "prepare")?;
     run_pkgbuild_function(&startdir, &srcdir, &pkgdir, &pkgbuild, "build")?;
     run_pkgbuild_function(&startdir, &srcdir, &pkgdir, &pkgbuild, "check")?;

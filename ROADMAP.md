@@ -555,6 +555,56 @@ display rendered the actual current date; `cbonsai`'s compiled binary
 installed as a genuine, correctly linked ELF executable) — the same
 two-stage verification (build, then actually install and run) already
 established for the synthetic-PKGBUILD checks above.
+
+**Extended to real VCS (`-git`) sources (2026-09-19).** One of the
+most common real AUR shapes hadn't been tried yet: a `-git` package
+whose `source=()` is a live git repository rather than a downloadable
+archive, with a `pkgver()` function computing the real version from
+`git describe` after checkout — `makepkg-rs` had no VCS handling at
+all before this (a `git+https://...` URL would have been handed
+straight to the plain-HTTP downloader and failed outright). Tried two
+real, structurally different `-git` PKGBUILDs before settling on a
+clean one: `slock-git`/`st-git` both reference `$BUILDDIR`, a real but
+optional makepkg.conf setting most users never set, in a way that
+breaks even under real makepkg when it's unset (`cp file "$BUILDDIR"`
+with `BUILDDIR` empty) — a real upstream PKGBUILD assumption mismatch,
+not a gap in this tool, so not chased. `dmenu-git` has no such
+dependency and is otherwise a clean, representative example (real
+`git+https://` source, `pkgver()`, real `prepare()`/`build()`/
+`package()`).
+- [x] VCS `source=()` entries — recognizes `git+<url>` (the standard
+      makepkg VCS-prefix syntax) and a bare `git://` URL (used
+      directly by some upstream PKGBUILDs, e.g. suckless's own,
+      unambiguous without the prefix since the scheme alone says
+      "git"), including the `#tag=`/`#branch=`/`#commit=` pinning
+      syntax real makepkg supports. Clones via the real `git` binary
+      (not a vendored git implementation — same reasoning as shelling
+      out to `gpg` for OpenPGP or `patch`/`make`/`gcc` for building:
+      reimplementing git wire protocol handling isn't a reasonable
+      trade for what this needs) into `$srcdir/<reponame>`, named the
+      same way real makepkg does — the URL's own last path segment, or
+      an explicit `name::` prefix when the source entry has one.
+      Re-running against an already-cloned checkout skips re-cloning
+      (this project's own idempotent-rebuild convention, matching how
+      `boot-test.sh`'s cached rootfs works) rather than always
+      re-fetching.
+      `pkgver()`, if defined, now runs (with `$srcdir` as its working
+      directory, matching every real example found) right after
+      sources are prepared and before `prepare()`/`build()` — its
+      output becomes the real package version for the rest of the
+      build and the final output filename, overriding the PKGBUILD's
+      own placeholder `pkgver=` value the same way real makepkg does.
+      Verified for real against `dmenu-git`: cloned the actual live
+      `git.suckless.org/dmenu` repository, correctly computed a real
+      current version (`5.4.r6.61e0072`) that differs from the AUR
+      PKGBUILD's own stale placeholder (`5.2.r7.7ab0cb5`) — proving
+      this is genuinely running `git describe` against a live clone,
+      not just echoing the static value — then built, installed via
+      `pacman-rs -U`, and confirmed the installed binary is a real,
+      correctly linked ELF executable.
+      Not implemented: `svn+`/`hg+`/`bzr+` sources (real but rarer than
+      git in practice), `noextract`, VCS-source-specific `makedepends`
+      auto-detection.
 - [x] `which` and `patch` — the remaining small, well-scoped
       base-devel-adjacent utilities PKGBUILDs commonly need. `which`
       vendors the `which` crate (real cross-platform `PATH` lookup);

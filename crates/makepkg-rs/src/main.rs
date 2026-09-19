@@ -125,8 +125,19 @@
 //!   pipeline, not even a `Package` field, before this. Both now flow
 //!   through end to end, including real MD5-hash-based local-db
 //!   `%BACKUP%` tracking matching real pacman's own format exactly.
+//! - `dust-git`/`eza-git`: real Rust/`cargo`-based builds (`dust-git`
+//!   built and even ran its own real integration test suite via
+//!   `cargo test`), plus a real gap spotted *by reading* `eza-git`'s
+//!   PKGBUILD rather than by running it (blocked by missing
+//!   `libgit2`/`pandoc` system packages, an environment gap, not a
+//!   tool one): `package() { depends+=("libgit2.so") ... }` — a
+//!   metadata array reassigned *inside a plain, non-split
+//!   `package()`*. Confirmed with a synthetic reproduction: an
+//!   appended dependency was silently dropped from the built
+//!   `.PKGINFO` before this was fixed by reusing the same capture
+//!   mechanism split packages' `package_<name>()` already had.
 //!
-//! All nine built (or, for `1password-cli`, correctly got as far as
+//! All ten built (or, for `1password-cli`, correctly got as far as
 //! a real `gpg` "no public key" error — matching what real makepkg
 //! itself would report without that key already trusted), installed
 //! via `pacman-rs -U`, and ran/resolved correctly afterward. `.install`
@@ -1080,8 +1091,20 @@ fn run() -> Result<()> {
 
     if pkgnames.len() == 1 {
         let name = &pkgnames[0];
-        run_pkgbuild_function(&startdir, &srcdir, &shared_pkgdir, &pkgbuild, "package")?;
-        let pkg = build_package_meta(name, &base, &version, &carch, &pkgbuild, &HashMap::new());
+        // Not just `run_pkgbuild_function`: a plain (non-split)
+        // `package()` can still reassign metadata arrays before
+        // finishing (`depends+=('foo.so')` is a real, common pattern
+        // — e.g. adding a `.so` dependency only discovered at package
+        // time) — a real gap caught by reading `eza-git`'s actual
+        // PKGBUILD (`depends+=("libgit2.so")` inside its own
+        // `package()`), confirmed with a synthetic reproduction
+        // before fixing: the appended dependency was silently
+        // dropped from the built `.PKGINFO` entirely. Reusing the
+        // same capture mechanism split packages already needed fixes
+        // it here too, not just for `package_<name>()`.
+        let overrides =
+            run_package_and_capture_metadata(&startdir, &srcdir, &shared_pkgdir, "package")?;
+        let pkg = build_package_meta(name, &base, &version, &carch, &pkgbuild, &overrides);
         let install_file = pkgbuild.scalar("install").map(|f| startdir.join(f));
         let out_name = format!("{name}-{version}-{carch}.pkg.tar.zst");
         let out_path = startdir.join(&out_name);

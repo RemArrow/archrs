@@ -879,6 +879,39 @@ downgrade.conf)`).
       Matches real `pacman -Qii`'s exact label width and multi-line
       continuation format (checked directly against this dev
       machine's own `pacman -Qii pacman` output).
+
+**Real gap found by reading a PKGBUILD, not by running it
+(2026-09-19).** Tried a structurally different category of real
+package — Rust/`cargo`-based — via `dust-git` (`git+` with an explicit
+`name::` prefix, real `cargo fetch`/`cargo build`/`cargo test`, all of
+which ran for real, including the project's own actual integration
+test suite). While reading a second candidate's PKGBUILD
+(`eza-git`, before attempting to build it — blocked anyway by missing
+`libgit2`/`pandoc` system packages, an environment gap not a tool
+bug) a real, different gap stood out directly in the source:
+`package() { depends+=("libgit2.so") ... }` — appending to `depends`
+*inside a plain, non-split `package()`*, not a `package_<name>()`.
+Confirmed with a synthetic reproduction before fixing: an appended
+dependency was silently dropped from the built `.PKGINFO` entirely.
+- [x] Metadata array reassignment inside a plain `package()` — split
+      packages already had this handled correctly
+      (`run_package_and_capture_metadata`, added for `package_<name>`
+      overrides); the plain single-package path just called
+      `run_pkgbuild_function` instead, which doesn't read variables
+      back afterward. Fixed by reusing the same capture mechanism for
+      both, rather than only for the split case it was originally
+      built for.
+      Verified with a synthetic PKGBUILD (`depends=('glibc')` at the
+      top level, `depends+=('curl.so')` inside `package()`): the
+      built `.PKGINFO` now correctly shows both `depend = glibc` and
+      `depend = curl.so`, where before the fix only `glibc` appeared.
+      Also verified for real against `dust-git` (no regression: a
+      package with no metadata overrides in `package()` still builds
+      identically) and confirmed, via `eza-git`'s real clone
+      behavior, that both the `name::` source-rename prefix and the
+      `#branch=main` VCS pinning fragment work correctly together
+      against a real, complex PKGBUILD, even though the build itself
+      couldn't complete in this environment.
 - [x] `which` and `patch` — the remaining small, well-scoped
       base-devel-adjacent utilities PKGBUILDs commonly need. `which`
       vendors the `which` crate (real cross-platform `PATH` lookup);

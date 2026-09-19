@@ -1045,6 +1045,58 @@ write operation remain open if a real need for them shows up, on the
 same "not needed yet, not impossible" footing as Phase 5's own closing
 boundary.
 
+### Phase 7 — storage visibility (in progress)
+Picks up `lsblk` from Phase 5's closing list — it was originally
+grouped there with `lspci`/`lsusb` under "needs a vendor/device ID
+database," but that's only true for those two (`pci.ids`/`usb.ids`);
+`lsblk`'s own default output needs neither, just `/sys/block`.
+
+- [x] `lsblk` — no crate to vendor: reads `/sys/block/<dev>` and each
+      device's own `size`/`ro`/`removable`/`dev` attribute files
+      directly, the same reasoning as `dmesg`/`ss` needing no engine
+      of their own. Default columns only (`NAME MAJ:MIN RM SIZE RO
+      TYPE MOUNTPOINTS`), with the same tree-drawing (`├─`/`└─`) real
+      `lsblk` uses for partitions under their parent disk.
+      `MOUNTPOINTS` needed two lookup keys, not one, discovered by
+      testing on two genuinely different real systems (this dev
+      machine's btrfs root, and the boot test's ext4 root) rather than
+      just one:
+      - The real device path, read from `/proc/self/mountinfo`'s
+        trailing mount-source field, resolves most filesystems
+        correctly — except the *root* filesystem specifically, which
+        the kernel always reports there as the synthetic `/dev/root`
+        alias, never the real `root=` path used at boot (confirmed via
+        the real boot test: `root=/dev/vda` still shows source
+        `/dev/root`).
+      - Falling back to `MAJ:MIN` (mountinfo's 3rd field) resolves
+        that case correctly (ext4/vfat/etc. report the real device's
+        actual number there) — except btrfs, which uses its own
+        internal anon-block-device numbering for multi-subvolume
+        mounts, confirmed directly on this dev machine: this box's
+        btrfs `/`, `/home`, `/var/cache`, `/var/log` subvolumes all
+        share one `MAJ:MIN` matching nothing in `/sys/block`, while
+        each one's mount-source field correctly says the real
+        `/dev/nvme0n1p2`.
+      So: try the real device-path match first, fall back to
+      `MAJ:MIN` only for the `/dev/root` case — the same two-technique
+      approach real `lsblk` itself uses via `libmount`. Verified,
+      after this fix, correct on both real systems: this dev machine's
+      full btrfs multi-mountpoint tree, and the boot test's `vda`
+      (major `254`, real virtio-blk) showing `/` correctly via the
+      `MAJ:MIN` fallback.
+      `SIZE` is a hand-rolled binary-prefix (K/M/G/T) formatter, close
+      to but not guaranteed identical to real `lsblk`'s own rounding —
+      same category of cosmetic gap as `free -h` elsewhere in this
+      project.
+      Not implemented: `-f` (filesystem type/UUID/label — needs
+      `libblkid`), `-o` (custom columns), `-J`/`-P` (JSON/pairs
+      output), device-mapper/LVM/RAID relationship trees.
+
+Still open for this phase: `lspci`/`lsusb` — these genuinely do need a
+vendor/device ID database (`pci.ids`/`usb.ids`) this project has no
+copy of and no clear source to vendor cleanly, the real distinction
+Phase 5's closing note was pointing at.
+
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,
 most already upstream projects in their own languages) is not a software

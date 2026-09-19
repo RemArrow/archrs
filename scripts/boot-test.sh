@@ -102,6 +102,10 @@ echo "ARCHRS-BOOT-TEST: ss listener: $(ss -tl | grep -c LISTEN || true)"
 echo "ARCHRS-BOOT-TEST: ip addr:"
 ip addr | tr '\n' '|'
 echo
+echo "ARCHRS-BOOT-TEST: lsblk:"
+lsblk | tr '\n' '|'
+echo
+echo
 echo "ARCHRS-BOOT-TEST: all checks complete, powering off"
 kill -USR2 1
 sleep 5
@@ -157,6 +161,8 @@ check "ARCHRS-BOOT-TEST: chroot exit code: 0"
 check "ARCHRS-BOOT-TEST: tmpfs write: written through tmpfs"
 check "ARCHRS-BOOT-TEST: tmpfs unmounted: 0"
 check "1: lo: <LOOPBACK>"
+check "vda         254:0"
+check "1G 0  disk /|"
 check "archrs-init: powering off"
 check "reboot: Power down"
 

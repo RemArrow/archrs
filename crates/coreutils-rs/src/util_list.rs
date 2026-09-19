@@ -197,4 +197,7 @@ const UTILS: &[(&str, &str)] = &[
     // fully synchronously instead of through its async wrapper) — see
     // ip_cmd.rs.
     ("ip", "archrs-native"),
+    // `lsblk` (util-linux) — reads /sys/block directly, no crate
+    // needed for the default column set — see lsblk_cmd.rs.
+    ("lsblk", "archrs-native"),
 ];

@@ -33,6 +33,7 @@ mod grep_cmd;
 mod gzip_cmd;
 mod ip_cmd;
 mod less_cmd;
+mod lsblk_cmd;
 mod mount_cmd;
 mod patch_cmd;
 mod ping_cmd;
@@ -214,6 +215,7 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "umount" => mount_cmd::run_umount(args),
         "ss" => ss_cmd::run(args),
         "ip" => ip_cmd::run(args),
+        "lsblk" => lsblk_cmd::run(args),
         _ => return None,
     })
 }

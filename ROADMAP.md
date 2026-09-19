@@ -1719,6 +1719,83 @@ loading — is now fully worked through except interactive/curses tools
 add`/`ip route add`), both still open on the same "not needed yet, not
 impossible" footing they always were.
 
+### Phase 9 — real interactive login (complete)
+Every phase before this verified pieces working correctly in isolation
+(a command's own output, a boot-time script). None of it proved a
+*human* could actually sit down at this system and use it — the boot
+test's own script is fixed and non-interactive, and there was no way
+to log in at all: no `reboot`/`poweroff` a logged-in user could run
+(only an external `kill -USR2 1` sent from outside the VM), and
+nothing exercising `agetty`/`login`/a real shell session end to end.
+Opened and closed the same day, driven by the user's own "I want this
+to be usable."
+
+- [x] **`reboot`/`poweroff`/`halt`/`shutdown`** (`coreutils-rs`'s
+      `power_cmd.rs`) — thin wrappers sending the exact real signals
+      `archrs-init` already listens for (SIGUSR1/SIGUSR2), matching its
+      own real mechanism rather than inventing a second one (real
+      `reboot`/`poweroff` on other distros go through `systemd`/D-Bus
+      or `/dev/initctl`, neither of which exists here, since
+      `archrs-init` isn't a systemd replacement). `kill(2)`'s own
+      permission check does the privilege enforcement for free: a
+      non-root user signaling PID 1 gets a real `EPERM`, no separate
+      check needed — verified for real in both the boot test (root
+      running `poweroff` genuinely powers the VM off, replacing the
+      previous external `kill -USR2 1`) and the new login test below
+      (a logged-in unprivileged `testuser` running `poweroff` is
+      genuinely refused).
+
+- [x] **`scripts/login-test.sh` + `scripts/login-test-driver.py`** — a
+      second, new boot test alongside `scripts/boot-test.sh` (sharing
+      its rootfs-build logic via the new `scripts/lib-build-rootfs.sh`,
+      factored out for exactly this reuse) that drives a *genuinely
+      interactive* session instead of a fixed script: real `agetty`
+      respawning on the serial console, real `login(1)` authenticating
+      against real PAM/shadow, and a Python driver (no `expect`
+      package on this dev machine, so a small custom one built on
+      `socket`+`select`) typing at it over a QEMU serial `unix:`
+      socket exactly like a human would over a real terminal. All
+      real, not simulated: a wrong password is genuinely rejected by
+      real PAM, a correct one genuinely authenticates and execs a real
+      shell as the real user, an unprivileged `poweroff` is genuinely
+      refused, and logging out genuinely brings `agetty` back.
+      Found two real bugs while getting this working, both fixed:
+      - `archrs-init`'s own service-list parser is a plain
+        `str::split_whitespace()` with no shell-style quoting (a real,
+        pre-existing limitation, not something this session invented —
+        its own module doc comment already says "no IPC mechanism for
+        anything richer yet"). A config line like `wait sh -c "a; b"`
+        doesn't do what it looks like: the quotes are just characters
+        to it, so `useradd -m -s /bin/sh testuser; ...` inline in a
+        config line fell apart into separate argv entries and `brush`
+        rejected `-m` as an unexpected argument. Worked around here
+        the same way `scripts/boot-test.sh`'s own fixed script already
+        does — a real script *file*, invoked as two plain
+        space-separated tokens that need no quoting — rather than
+        fixing the parser itself, which is real, separate work of its
+        own if a config ever genuinely needs quoted arguments.
+      - `brush` (this project's own interactive shell) queries cursor
+        position via an ANSI DSR escape (`\x1b[6n`) to size itself when
+        it can't otherwise determine the terminal geometry — completely
+        normal, a real terminal program (`minicom`/`screen`/a physical
+        console's own kernel VT) answers this automatically, but a raw
+        socket obviously doesn't unless something on the other end
+        does. Confirmed for real by *not* handling it first: `brush`
+        printed "input error occurred: The cursor position could not
+        be read within a normal duration" and the session died
+        immediately after login. Not an archrs bug — this is exactly
+        what a real terminal program is for — so the fix lives in the
+        test driver, which now answers the query the same way a real
+        terminal would, rather than in `brush`.
+      Also caught, separately, a real synchronization bug in the test
+      driver itself (not the system under test): the first version sent
+      the retry username immediately after seeing "incorrect" rather
+      than waiting for the actual fresh "login:" prompt to reappear,
+      racing the real prompt and desyncing every step after it. Fixed
+      by waiting for the real prompt text before proceeding, the same
+      "verify the real thing appeared, don't assume timing" discipline
+      the rest of this project already follows.
+
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,
 most already upstream projects in their own languages) is not a software

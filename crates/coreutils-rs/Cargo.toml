@@ -36,7 +36,7 @@ magic = "0.16"
 ping = "0.9"
 diffutils = "0.5"
 same-file = "1"
-nix = { version = "0.31", features = ["mount"] }
+nix = { version = "0.31", features = ["mount", "signal"] }
 netlink-sys = "0.9"
 netlink-packet-core = "0.9"
 netlink-packet-route = "0.33"

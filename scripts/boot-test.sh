@@ -2,10 +2,12 @@
 # Boots a real, minimal archrs system in QEMU and checks that it actually
 # comes up: archrs-init as genuine PID 1, mounts proc/sys/dev, runs
 # coreutils-rs's bash to exercise a handful of utilities, and shuts itself
-# down via SIGUSR2 -> a real reboot(2) syscall. See ROADMAP.md's "Real boot
-# test" section for what this is checking and why it matters (an unshare
-# sandbox can't grant the privileges real mount(2)/reboot(2) calls need, so
-# this is the only way to verify that code path for real).
+# down via `poweroff` -> SIGUSR2 -> a real reboot(2) syscall. See
+# ROADMAP.md's "Real boot test" section for what this is checking and why
+# it matters (an unshare sandbox can't grant the privileges real
+# mount(2)/reboot(2) calls need, so this is the only way to verify that
+# code path for real). For a real *interactive* login session instead of
+# this fixed script, see scripts/login-test.sh.
 #
 # Needs no host root: pacman-rs installs into a plain directory, and
 # `mke2fs -d` populates an ext4 image straight from that directory without
@@ -56,89 +58,7 @@ if [ "${1:-}" = "--clean" ]; then
     rm -rf "$WORKDIR"
 fi
 
-if [ -z "$KERNEL" ]; then
-    KERNEL=$(ls /boot/vmlinuz-* 2>/dev/null | head -1)
-fi
-if [ -z "$KERNEL" ] || [ ! -r "$KERNEL" ]; then
-    echo "boot-test: no readable kernel image found (set ARCHRS_BOOT_TEST_KERNEL)" >&2
-    exit 1
-fi
-
-for bin in coreutils-rs pacman-rs archrs-init crond crontab su sudo visudo; do
-    if [ ! -x "$TARGET/$bin" ]; then
-        echo "boot-test: $TARGET/$bin missing — run 'cargo build --release' first" >&2
-        exit 1
-    fi
-done
-
-mkdir -p "$ROOTFS"
-
-if [ ! -f "$ROOTFS/.base-installed" ]; then
-    # pam/sudo/shadow/util-linux pulled in purely for what this project
-    # doesn't reimplement: libpam.so + its real pam_unix/pam_rootok/...
-    # modules, and the real /etc/pam.d/{su,sudo,system-auth}, /etc/sudoers,
-    # /etc/login.defs config files (Arch's `shadow` package ships no su/
-    # login at all — those come from util-linux, which is also the only
-    # source of /etc/pam.d/su's `auth sufficient pam_rootok.so` line, the
-    # real mechanism that lets root su/sudo without a password). Every
-    # binary any of these four packages ship gets immediately overwritten
-    # below by this project's own coreutils-rs/privtools-rs equivalents
-    # where one exists — only the supporting files are actually used from
-    # them, same pattern as glibc/filesystem/bash/xz/file already below.
-    echo "boot-test: installing base system into $ROOTFS (glibc, filesystem, bash, xz, file, pam, sudo, shadow, util-linux, kmod)..."
-    $FAKEROOT "$TARGET/pacman-rs" -Sy --root "$ROOTFS"
-    $FAKEROOT "$TARGET/pacman-rs" -S glibc filesystem bash xz file pam sudo shadow util-linux kmod --root "$ROOTFS"
-    touch "$ROOTFS/.base-installed"
-fi
-
-echo "boot-test: installing archrs binaries..."
-mkdir -p "$ROOTFS/usr/local/bin"
-for bin in coreutils-rs pacman-rs makepkg-rs archrs-init crond crontab; do
-    $FAKEROOT cp "$TARGET/$bin" "$ROOTFS/usr/local/bin/$bin"
-done
-rm -f "$ROOTFS/sbin/init.archrs"
-$FAKEROOT cp "$TARGET/archrs-init" "$ROOTFS/sbin/init.archrs"
-
-# su/sudo/visudo: real standalone setuid-root binaries in real distros —
-# deliberately NOT symlinked through coreutils-rs's multicall dispatch
-# (see crates/privtools-rs's doc comment). Installed straight to /usr/bin,
-# overwriting the real util-linux/sudo package's own binaries but keeping
-# their PAM/sudoers config files.
-#
-# `chmod u+s` is gated on `$FAKEROOT` being active, not unconditional —
-# found the hard way (a real regression, caught by testing the no-fakeroot
-# fallback path directly): on `execve`, the kernel honors a setuid file's
-# own *real, on-disk* owner regardless of who invoked it, even root — so
-# a setuid bit on a binary that's genuinely still host-uid-owned (no
-# fakeroot) doesn't just fail to help, it actively downgrades a real-root
-# invoker's effective uid to the host's own uid on exec, breaking `su`
-# outright (`su: IO error: Operation not permitted`, confirmed by running
-# with fakeroot removed from PATH). Under `$FAKEROOT`, both the root
-# ownership and this setuid bit are faked consistently and really do land
-# in the final ext4 image (verified with `debugfs -R stat`), so the bit
-# is only ever set together with genuine (faked) root ownership.
-for bin in su sudo visudo; do
-    $FAKEROOT cp "$TARGET/$bin" "$ROOTFS/usr/bin/$bin"
-    if [ -n "$FAKEROOT" ]; then
-        $FAKEROOT chmod u+s "$ROOTFS/usr/bin/$bin"
-    fi
-done
-
-# Symlink every utility coreutils-rs dispatches, straight from its own
-# source of truth, so this list can never drift out of sync with it. One
-# single $FAKEROOT invocation wrapping the whole loop, not one per
-# symlink — fakeroot's per-process startup/state-reload cost would
-# otherwise be paid ~170 times over. A real temp script file, not an
-# inline `sh -c "..."` string, to sidestep having to reason about two
-# nested layers of shell-quoting for the same `$util` variable.
-grep -oP '^\s*\("\K[^"]+' "$WORKSPACE_ROOT/crates/coreutils-rs/src/util_list.rs" | sort -u > "$WORKDIR/util-names.txt"
-cat > "$WORKDIR/symlink-utils.sh" <<EOF
-#!/bin/sh
-while IFS= read -r util; do
-    ln -sf /usr/local/bin/coreutils-rs "$ROOTFS/usr/bin/\$util"
-done < "$WORKDIR/util-names.txt"
-EOF
-$FAKEROOT sh "$WORKDIR/symlink-utils.sh"
+. "$WORKSPACE_ROOT/scripts/lib-build-rootfs.sh"
 
 cat > "$ROOTFS/root/boot-test.sh" <<'SCRIPT'
 #!/usr/bin/sh
@@ -193,10 +113,14 @@ echo "ARCHRS-BOOT-TEST: sudo result: $(sudo -u testuser id -un 2>&1)"
 echo "ARCHRS-BOOT-TEST: lsmod exit code: $(lsmod >/dev/null 2>&1; echo $?)"
 echo "ARCHRS-BOOT-TEST: rmmod nonexistent: $(rmmod not_a_real_module 2>&1)"
 echo "ARCHRS-BOOT-TEST: modprobe nonexistent: $(modprobe not_a_real_module 2>&1)"
+# A non-root user must not be able to power the machine off — kill(2)'s
+# own real permission check (sender's uid must match PID 1's, i.e. be
+# root) does this for free, no separate check needed in poweroff_cmd.rs.
+echo "ARCHRS-BOOT-TEST: unprivileged poweroff: $(su - testuser -c poweroff 2>&1)"
 echo "ARCHRS-BOOT-TEST: all checks complete, powering off"
-kill -USR2 1
+poweroff
 sleep 5
-echo "ARCHRS-BOOT-TEST: FAIL: still alive after poweroff signal"
+echo "ARCHRS-BOOT-TEST: FAIL: still alive after poweroff"
 SCRIPT
 chmod +x "$ROOTFS/root/boot-test.sh"
 echo "/bin/sh /root/boot-test.sh" > "$ROOTFS/etc/archrs-init.conf"
@@ -264,6 +188,7 @@ fi
 check "ARCHRS-BOOT-TEST: lsmod exit code: 0"
 check "ARCHRS-BOOT-TEST: rmmod nonexistent: libkmod: ERROR: kmod_module_remove_module: could not remove 'not_a_real_module': No such file or directory"
 check "ARCHRS-BOOT-TEST: modprobe nonexistent: modprobe: module 'not_a_real_module' not found"
+check "ARCHRS-BOOT-TEST: unprivileged poweroff: poweroff: could not signal PID 1:"
 check "archrs-init: powering off"
 check "reboot: Power down"
 

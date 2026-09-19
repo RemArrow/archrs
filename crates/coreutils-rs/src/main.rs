@@ -40,6 +40,7 @@ mod lsusb_cmd;
 mod mount_cmd;
 mod patch_cmd;
 mod ping_cmd;
+mod power_cmd;
 mod procps_cmd;
 mod sed_cmd;
 mod ss_cmd;
@@ -239,6 +240,9 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "insmod" => kmod_cmd::run_insmod(args),
         "rmmod" => kmod_cmd::run_rmmod(args),
         "modprobe" => kmod_cmd::run_modprobe(args),
+        "reboot" => power_cmd::run_reboot(args),
+        "poweroff" | "halt" => power_cmd::run_poweroff(args),
+        "shutdown" => power_cmd::run_shutdown(args),
         _ => return None,
     })
 }

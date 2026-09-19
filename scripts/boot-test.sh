@@ -13,6 +13,22 @@
 # either. /dev/kvm is used opportunistically if writable; falls back to
 # software emulation (slower, still correct) otherwise.
 #
+# Image contents are, however, built under `fakeroot` when it's available
+# (opportunistically, like /dev/kvm above — falls back to every file
+# landing owned by the host's own uid if it isn't installed). This is what
+# makes the image's files genuinely root-owned, and the su/sudo/visudo
+# binaries genuinely setuid-root, without ever needing real host root:
+# fakeroot intercepts chown/chmod/stat within the wrapped commands and
+# fakes their results consistently, and since alpm-rs now actually
+# attempts to preserve each extracted file's own embedded archive
+# ownership (see crates/alpm-rs/src/install.rs's try_preserve_ownership),
+# those faked chowns really happen during package install, and the same
+# fakeroot session's later `mke2fs -d` call reads them back and bakes them
+# into the real ext4 image — verified directly with `debugfs -R stat` on a
+# scratch image before wiring this in. Without fakeroot, every file is
+# host-uid-owned as before (see the Phase 8 note in ROADMAP.md on why
+# `sudo` specifically needs this to actually work end to end).
+#
 # Usage: scripts/boot-test.sh [--clean]
 #   --clean   wipe the cached rootfs and reinstall the base system (network
 #             access to real Arch/Manjaro mirrors required either way, the
@@ -27,6 +43,14 @@ ROOTFS="$WORKDIR/rootfs"
 IMAGE="$WORKDIR/rootfs.img"
 LOG="$WORKDIR/boot.log"
 KERNEL="${ARCHRS_BOOT_TEST_KERNEL:-}"
+FAKEROOT_STATE="$WORKDIR/fakeroot.state"
+
+if command -v fakeroot >/dev/null 2>&1; then
+    FAKEROOT="fakeroot -i $FAKEROOT_STATE -s $FAKEROOT_STATE --"
+else
+    echo "boot-test: fakeroot not installed — image files will be host-uid-owned, not root-owned (sudo's own hardening will correctly refuse rather than run; see ROADMAP.md's Phase 8 section)" >&2
+    FAKEROOT=""
+fi
 
 if [ "${1:-}" = "--clean" ]; then
     rm -rf "$WORKDIR"
@@ -62,41 +86,59 @@ if [ ! -f "$ROOTFS/.base-installed" ]; then
     # where one exists — only the supporting files are actually used from
     # them, same pattern as glibc/filesystem/bash/xz/file already below.
     echo "boot-test: installing base system into $ROOTFS (glibc, filesystem, bash, xz, file, pam, sudo, shadow, util-linux, kmod)..."
-    "$TARGET/pacman-rs" -Sy --root "$ROOTFS"
-    "$TARGET/pacman-rs" -S glibc filesystem bash xz file pam sudo shadow util-linux kmod --root "$ROOTFS"
+    $FAKEROOT "$TARGET/pacman-rs" -Sy --root "$ROOTFS"
+    $FAKEROOT "$TARGET/pacman-rs" -S glibc filesystem bash xz file pam sudo shadow util-linux kmod --root "$ROOTFS"
     touch "$ROOTFS/.base-installed"
 fi
 
 echo "boot-test: installing archrs binaries..."
 mkdir -p "$ROOTFS/usr/local/bin"
 for bin in coreutils-rs pacman-rs makepkg-rs archrs-init crond crontab; do
-    cp "$TARGET/$bin" "$ROOTFS/usr/local/bin/$bin"
+    $FAKEROOT cp "$TARGET/$bin" "$ROOTFS/usr/local/bin/$bin"
 done
 rm -f "$ROOTFS/sbin/init.archrs"
-cp "$TARGET/archrs-init" "$ROOTFS/sbin/init.archrs"
+$FAKEROOT cp "$TARGET/archrs-init" "$ROOTFS/sbin/init.archrs"
 
 # su/sudo/visudo: real standalone setuid-root binaries in real distros —
 # deliberately NOT symlinked through coreutils-rs's multicall dispatch
 # (see crates/privtools-rs's doc comment). Installed straight to /usr/bin,
 # overwriting the real util-linux/sudo package's own binaries but keeping
-# their PAM/sudoers config files. Actual setuid-root ownership can't be
-# set here (this whole image build deliberately runs without host root,
-# so every file lands owned by the host's own uid, not 0) — not needed for
-# what this test verifies, since every process in the booted VM already
-# runs as genuine root; a real non-root user gaining privileges through
-# these binaries on a real install still needs a real `chown root:root` +
-# `chmod u+s` step outside this pipeline, left open like the rest of
-# "distributable" packaging.
+# their PAM/sudoers config files.
+#
+# `chmod u+s` is gated on `$FAKEROOT` being active, not unconditional —
+# found the hard way (a real regression, caught by testing the no-fakeroot
+# fallback path directly): on `execve`, the kernel honors a setuid file's
+# own *real, on-disk* owner regardless of who invoked it, even root — so
+# a setuid bit on a binary that's genuinely still host-uid-owned (no
+# fakeroot) doesn't just fail to help, it actively downgrades a real-root
+# invoker's effective uid to the host's own uid on exec, breaking `su`
+# outright (`su: IO error: Operation not permitted`, confirmed by running
+# with fakeroot removed from PATH). Under `$FAKEROOT`, both the root
+# ownership and this setuid bit are faked consistently and really do land
+# in the final ext4 image (verified with `debugfs -R stat`), so the bit
+# is only ever set together with genuine (faked) root ownership.
 for bin in su sudo visudo; do
-    cp "$TARGET/$bin" "$ROOTFS/usr/bin/$bin"
+    $FAKEROOT cp "$TARGET/$bin" "$ROOTFS/usr/bin/$bin"
+    if [ -n "$FAKEROOT" ]; then
+        $FAKEROOT chmod u+s "$ROOTFS/usr/bin/$bin"
+    fi
 done
 
 # Symlink every utility coreutils-rs dispatches, straight from its own
-# source of truth, so this list can never drift out of sync with it.
-grep -oP '^\s*\("\K[^"]+' "$WORKSPACE_ROOT/crates/coreutils-rs/src/util_list.rs" | sort -u |
+# source of truth, so this list can never drift out of sync with it. One
+# single $FAKEROOT invocation wrapping the whole loop, not one per
+# symlink — fakeroot's per-process startup/state-reload cost would
+# otherwise be paid ~170 times over. A real temp script file, not an
+# inline `sh -c "..."` string, to sidestep having to reason about two
+# nested layers of shell-quoting for the same `$util` variable.
+grep -oP '^\s*\("\K[^"]+' "$WORKSPACE_ROOT/crates/coreutils-rs/src/util_list.rs" | sort -u > "$WORKDIR/util-names.txt"
+cat > "$WORKDIR/symlink-utils.sh" <<EOF
+#!/bin/sh
 while IFS= read -r util; do
-    ln -sf /usr/local/bin/coreutils-rs "$ROOTFS/usr/bin/$util"
-done
+    ln -sf /usr/local/bin/coreutils-rs "$ROOTFS/usr/bin/\$util"
+done < "$WORKDIR/util-names.txt"
+EOF
+$FAKEROOT sh "$WORKDIR/symlink-utils.sh"
 
 cat > "$ROOTFS/root/boot-test.sh" <<'SCRIPT'
 #!/usr/bin/sh
@@ -142,15 +184,12 @@ echo "ARCHRS-BOOT-TEST: shadow hash: $(grep -c '^testuser:\$' /etc/shadow)"
 echo "ARCHRS-BOOT-TEST: su result: $(su - testuser -c 'id -un')"
 # sudo-rs hardens further than su-rs: it also demands /etc (and every
 # ancestor of /etc/sudoers) be genuinely root-owned, not just its own
-# binary. This image is built entirely without host root (see the
-# install step's comment), so every file — including /etc itself —
-# is owned by the host's real uid, not 0; sudo-rs correctly detects
-# and refuses this rather than trusting a directory a non-root user
-# could tamper with. Checking for that exact refusal message verifies
-# the hardening logic fires for real, which is what's actually
-# reachable here; sudo's full functional path needs a real- or
-# fake-rooted image build, deliberately not done yet (see ROADMAP.md).
-echo "ARCHRS-BOOT-TEST: sudo refusal: $(sudo -u testuser id -un 2>&1)"
+# binary — correctly refuses otherwise, rather than trusting a directory
+# a non-root user could tamper with. This is why the image build is
+# wrapped in $FAKEROOT (see this script's own top-of-file comment and
+# ROADMAP.md's Phase 8 section): without it, every file including /etc
+# would be host-uid-owned and this would genuinely, correctly fail.
+echo "ARCHRS-BOOT-TEST: sudo result: $(sudo -u testuser id -un 2>&1)"
 echo "ARCHRS-BOOT-TEST: lsmod exit code: $(lsmod >/dev/null 2>&1; echo $?)"
 echo "ARCHRS-BOOT-TEST: rmmod nonexistent: $(rmmod not_a_real_module 2>&1)"
 echo "ARCHRS-BOOT-TEST: modprobe nonexistent: $(modprobe not_a_real_module 2>&1)"
@@ -165,7 +204,7 @@ echo "/bin/sh /root/boot-test.sh" > "$ROOTFS/etc/archrs-init.conf"
 echo "boot-test: building disk image..."
 rm -f "$IMAGE"
 truncate -s 1G "$IMAGE"
-mke2fs -F -t ext4 -d "$ROOTFS" -L archrsroot "$IMAGE" >/dev/null
+$FAKEROOT mke2fs -F -t ext4 -d "$ROOTFS" -L archrsroot "$IMAGE" >/dev/null
 
 KVM_ARGS=""
 if [ -w /dev/kvm ]; then
@@ -217,7 +256,11 @@ check "ARCHRS-BOOT-TEST: useradd exit code: 0"
 check "ARCHRS-BOOT-TEST: chpasswd exit code: 0"
 check "ARCHRS-BOOT-TEST: shadow hash: 1"
 check "ARCHRS-BOOT-TEST: su result: testuser"
-check "ARCHRS-BOOT-TEST: sudo refusal: sudo: invalid configuration: /etc must be owned by root"
+if [ -n "$FAKEROOT" ]; then
+    check "ARCHRS-BOOT-TEST: sudo result: testuser"
+else
+    check "ARCHRS-BOOT-TEST: sudo result: sudo: invalid configuration: /etc must be owned by root"
+fi
 check "ARCHRS-BOOT-TEST: lsmod exit code: 0"
 check "ARCHRS-BOOT-TEST: rmmod nonexistent: libkmod: ERROR: kmod_module_remove_module: could not remove 'not_a_real_module': No such file or directory"
 check "ARCHRS-BOOT-TEST: modprobe nonexistent: modprobe: module 'not_a_real_module' not found"

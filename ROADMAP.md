@@ -1618,31 +1618,58 @@ rather than an oversight.
       real distro relies on), switches uid/gid/groups for real, and
       execs a real login shell as `testuser` — verified end to end,
       not just an exit code.
-      `sudo` itself hit a real, structural wall instead: `sudo-rs`
+      `sudo` itself originally hit a real, structural wall: `sudo-rs`
       additionally hardens by requiring `/etc` (and every ancestor of
       `/etc/sudoers`) to be genuinely root-owned and not group/world-
       writable, refusing otherwise ("sudo: invalid configuration: /etc
-      must be owned by root"). This boot test's image is built
-      entirely without host root (a deliberate project-wide design
-      choice — see the "Real boot test" section up top), so every
-      file on it, `/etc` included, is owned by the *host's* real uid,
-      never 0. This isn't a bug in either `sudo-rs` or this project's
-      own code — `sudo-rs` is correctly refusing to trust a directory
-      a non-root user could tamper with — so the boot test asserts
-      that exact refusal message instead of a successful run,
-      verifying the hardening logic fires for real. A working `sudo`
-      end-to-end needs the image-build pipeline to produce genuinely
-      root-owned files, which needs either real host root (the thing
-      this whole pipeline was built to avoid) or a `fakeroot`-wrapped
-      build step (a real, standard technique for this — real
-      distro/embedded build systems do exactly this — just not
-      implemented yet). Left open, same footing as `makepkg-rs`'s PGP
-      keyserver-import gap: a real, identified, deliberately deferred
-      piece of work, not an oversight.
-      Real setuid-root ownership on the installed `su`/`sudo`/`visudo`
-      binaries themselves has the identical root cause and identical
-      open status — `cp`'d into the image as the host's own uid, not
-      chowned to root, for the same "no host root available" reason.
+      must be owned by root") — correct behavior, not a bug, since
+      this boot test's image was, at the time, built entirely without
+      host root, so every file on it (`/etc` included) was owned by
+      the *host's* real uid, never 0.
+      **Closed same day** by making the image build genuinely
+      root-owned, still without any host root: `scripts/boot-test.sh`
+      now wraps package installation, this project's own binary
+      install steps, and the final `mke2fs -d` in `fakeroot` when it's
+      available (opportunistically, like `/dev/kvm` already was) —
+      the same real technique real distro/embedded build systems use
+      for exactly this. This only actually does anything because
+      `alpm-rs` itself needed a real fix first: its extraction code
+      (`crates/alpm-rs/src/install.rs`) was calling `tar`'s `unpack()`
+      without ever asking it to preserve the archive's own embedded
+      uid/gid, so real packages' real root ownership was silently
+      discarded even when running as real root. Fixed with a
+      best-effort `fchownat(..., AT_SYMLINK_NOFOLLOW)` after each
+      extracted entry — deliberately *not* using `tar`'s own built-in
+      `set_preserve_ownerships` flag, which propagates any ownership
+      failure as a hard error and would abort the whole install; real
+      `tar`/`pacman` just warn and keep going when they can't chown,
+      and an unprivileged (non-`fakeroot`) install still needs to keep
+      working exactly as before. Verified in isolation before wiring
+      it into the boot test at all: built a scratch image under
+      `fakeroot -s <state>` and inspected it directly with `debugfs -R
+      stat` (no mount needed) — real `User: 0 Group: 0`, and a
+      `chmod u+s` under the same session really does land as `Mode:
+      04755` in the actual ext4 inode.
+      This surfaced one real regression along the way, caught by
+      deliberately testing the *no-`fakeroot`* fallback path directly
+      (temporarily stripping `fakeroot` from `PATH`): the first version
+      `chmod u+s`'d the `su`/`sudo`/`visudo` binaries unconditionally,
+      not just under `fakeroot`. On Linux, `execve` honors a setuid
+      file's *real, on-disk* owner regardless of who invoked it, even
+      root — so a setuid bit on a binary that's still genuinely
+      host-uid-owned doesn't just fail to help, it actively downgrades
+      a real-root invoker's effective uid to the host's own uid on
+      exec, breaking `su` outright (a real, reproduced "Operation not
+      permitted", not a hypothetical). Fixed by gating `chmod u+s`
+      behind the same `fakeroot` availability check as everything
+      else, and reverified both paths for real: with `fakeroot`, `su`
+      and `sudo` both genuinely authenticate and switch to `testuser`;
+      without it, `su` still works (no setuid bit, same as before any
+      of this existed) and `sudo` correctly refuses with the original
+      message — the boot test asserts whichever is actually correct
+      for the environment it's running in.
+      `makepkg-rs`'s PGP keyserver-import gap remains open on its own
+      original footing — unrelated to this fix.
 
 - [x] **`insmod`/`rmmod`/`lsmod`/`modprobe`** — picks up the last
       item from Phase 5's original closing-boundary list ("no kernel

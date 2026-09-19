@@ -63,6 +63,7 @@ dependencies = [
  "blake2",
  "flate2",
  "md-5 0.10.6",
+ "nix 0.31.3",
  "sha1 0.10.7",
  "sha2 0.10.9",
  "tar",

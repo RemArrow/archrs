@@ -97,6 +97,16 @@ pub fn extract_package(
 
         let is_dir = entry.header().entry_type().is_dir();
         let dest = root.join(&entry_path);
+        let owner = entry
+            .header()
+            .uid()
+            .ok()
+            .and_then(|u| u32::try_from(u).ok());
+        let group = entry
+            .header()
+            .gid()
+            .ok()
+            .and_then(|g| u32::try_from(g).ok());
 
         if entry.header().entry_type() == tar::EntryType::Link {
             // `Entry::unpack` resolves a hard link's target relative to
@@ -129,6 +139,7 @@ pub fn extract_package(
                 .unpack(&dest)
                 .map_err(|e| InstallError::Extract(dest.clone(), e))?;
         }
+        try_preserve_ownership(&dest, owner, group);
 
         let mut recorded = entry_str.clone();
         if is_dir && !recorded.ends_with('/') {
@@ -141,6 +152,38 @@ pub fn extract_package(
     write_local_files(&pkg_dir, &installed_paths)?;
 
     Ok(installed_paths)
+}
+
+/// Best-effort `lchown` to the archive's own embedded uid/gid (real Arch
+/// packages record real ownership — 0:0 for virtually everything, matching
+/// what they were built under, typically `fakeroot`), matching real
+/// `tar`/`pacman`'s own non-fatal behavior when run without the privilege
+/// to actually change ownership: a plain unprivileged install (this
+/// project's default, and `scripts/boot-test.sh`'s own "no host root
+/// needed" design) silently keeps every file owned by the invoking user,
+/// exactly as before this existed. Run under `fakeroot` instead (a real
+/// technique real distro/embedded build systems use for exactly this),
+/// this actually succeeds and produces a genuinely root-owned image —
+/// needed for anything that checks real file ownership, like `sudo-rs`'s
+/// own hardening (see ROADMAP.md's Phase 8 section).
+///
+/// Deliberately swallows the error rather than using `tar`'s own built-in
+/// `Entry::set_preserve_ownerships`, which propagates an ownership
+/// failure as a hard error and would abort the entire install — the
+/// opposite of real `tar`/`pacman`'s "warn and keep going" behavior, and
+/// would break every unprivileged install this project currently relies
+/// on.
+fn try_preserve_ownership(dest: &Path, owner: Option<u32>, group: Option<u32>) {
+    use nix::fcntl::{AT_FDCWD, AtFlags};
+    use nix::unistd::{Gid, Uid, fchownat};
+
+    let _ = fchownat(
+        AT_FDCWD,
+        dest,
+        owner.map(Uid::from_raw),
+        group.map(Gid::from_raw),
+        AtFlags::AT_SYMLINK_NOFOLLOW,
+    );
 }
 
 fn copy_entry_to<R: Read>(entry: &mut tar::Entry<R>, dest: &Path) -> Result<(), InstallError> {

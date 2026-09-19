@@ -207,4 +207,25 @@ const UTILS: &[(&str, &str)] = &[
     // time — see lspci_cmd.rs/lsusb_cmd.rs.
     ("lspci", "archrs-native"),
     ("lsusb", "archrs-native"),
+    // Phase 8 — shadow-utils, vendoring the real `uutils/shadow-rs`
+    // crates (same project, same `uucore`/Fluent-locale machinery as
+    // every other uu_* entry above) rather than hand-rolling
+    // /etc/passwd·shadow·group editing. `su`/`sudo`/`visudo` are
+    // deliberately NOT here — see crates/privtools-rs for why they're
+    // separate setuid-root binaries instead of multicall dispatch
+    // targets.
+    ("passwd", "uu_passwd"),
+    ("useradd", "uu_useradd"),
+    ("userdel", "uu_userdel"),
+    ("usermod", "uu_usermod"),
+    ("chpasswd", "uu_chpasswd"),
+    ("chage", "uu_chage"),
+    ("groupadd", "uu_groupadd"),
+    ("groupdel", "uu_groupdel"),
+    ("groupmod", "uu_groupmod"),
+    ("grpck", "uu_grpck"),
+    ("pwck", "uu_pwck"),
+    ("chfn", "uu_chfn"),
+    ("chsh", "uu_chsh"),
+    ("newgrp", "uu_newgrp"),
 ];

@@ -948,10 +948,14 @@ dependencies = [
  "uu_basename",
  "uu_basenc",
  "uu_cat",
+ "uu_chage",
+ "uu_chfn",
  "uu_chgrp",
  "uu_chmod",
  "uu_chown",
+ "uu_chpasswd",
  "uu_chroot",
+ "uu_chsh",
  "uu_cksum",
  "uu_comm",
  "uu_cp",
@@ -972,7 +976,11 @@ dependencies = [
  "uu_false",
  "uu_fmt",
  "uu_fold",
+ "uu_groupadd",
+ "uu_groupdel",
+ "uu_groupmod",
  "uu_groups",
+ "uu_grpck",
  "uu_head",
  "uu_hostid",
  "uu_hostname",
@@ -991,18 +999,21 @@ dependencies = [
  "uu_mktemp",
  "uu_more",
  "uu_mv",
+ "uu_newgrp",
  "uu_nice",
  "uu_nl",
  "uu_nohup",
  "uu_nproc",
  "uu_numfmt",
  "uu_od",
+ "uu_passwd",
  "uu_paste",
  "uu_pathchk",
  "uu_pinky",
  "uu_pr",
  "uu_printenv",
  "uu_printf",
+ "uu_pwck",
  "uu_pwd",
  "uu_readlink",
  "uu_realpath",
@@ -1039,6 +1050,9 @@ dependencies = [
  "uu_unexpand",
  "uu_uniq",
  "uu_unlink",
+ "uu_useradd",
+ "uu_userdel",
+ "uu_usermod",
  "uu_users",
  "uu_vdir",
  "uu_wc",
@@ -1555,6 +1569,26 @@ name = "endian-type"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "869b0adbda23651a9c5c0c3d270aac9fcb52e8622a8f2b17e57802d7791962f2"
+
+[[package]]
+name = "enumflags2"
+version = "0.7.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1027f7680c853e056ebcec683615fb6fbbc07dbaa13b4d5d9442b146ded4ecef"
+dependencies = [
+ "enumflags2_derive",
+]
+
+[[package]]
+name = "enumflags2_derive"
+version = "0.7.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67c78a4d8fdf9953a5c9d458f9efe940fd97a0cab0941c075a813ac594733827"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "equivalent"
@@ -2699,6 +2733,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "landlock"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cca98e95f35b29d469dade6724c6f96cec9236640f745a0e99b0334ec320ab1"
+dependencies = [
+ "enumflags2",
+ "libc",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3609,6 +3654,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "privtools-rs"
+version = "0.1.0"
+dependencies = [
+ "sudo-rs",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4308,6 +4360,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
+name = "sudo-rs"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2feba7868bd3c057f8362302112d00a18fd6ff458baa3c779c9254b761052a87"
+dependencies = [
+ "glob",
+ "libc",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4933,6 +4995,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_chage"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b124f9e7929604d8ec6c10c7bfca72ab134ef6bb100348f5fd2873b0c8569f60"
+dependencies = [
+ "clap",
+ "rustix",
+ "uu_shadow_core",
+ "uucore 0.9.0",
+]
+
+[[package]]
 name = "uu_checksum_common"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4941,6 +5015,18 @@ dependencies = [
  "clap",
  "fluent",
  "uucore 0.12.0",
+]
+
+[[package]]
+name = "uu_chfn"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06f45cdfec36346046541e53ea4f90893d1cc72d9c8c53de73cadacd17245f65"
+dependencies = [
+ "clap",
+ "rustix",
+ "uu_shadow_core",
+ "uucore 0.9.0",
 ]
 
 [[package]]
@@ -4978,6 +5064,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_chpasswd"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f7779111eb7b2c5efd9e391458ea408340c5bd6396c6029a5c1132da2249188"
+dependencies = [
+ "clap",
+ "rustix",
+ "uu_shadow_core",
+ "uucore 0.9.0",
+ "zeroize",
+]
+
+[[package]]
 name = "uu_chroot"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4988,6 +5087,18 @@ dependencies = [
  "rustix",
  "thiserror 2.0.20",
  "uucore 0.12.0",
+]
+
+[[package]]
+name = "uu_chsh"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb8e787aa903770af31c292b7e914559eacd6e222d68ccd128e07758cdfcd1ff"
+dependencies = [
+ "clap",
+ "rustix",
+ "uu_shadow_core",
+ "uucore 0.9.0",
 ]
 
 [[package]]
@@ -5259,6 +5370,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_groupadd"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2d138d505a55baad3dddaf0019835f57eb96bc5b93c1b38f5ff747f8f54ac8a"
+dependencies = [
+ "clap",
+ "rustix",
+ "uu_shadow_core",
+ "uucore 0.9.0",
+]
+
+[[package]]
+name = "uu_groupdel"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "066130bab1dfb813ed2a659f9c33f3b17affe1dd37a16447f84632fe64c6fedd"
+dependencies = [
+ "clap",
+ "rustix",
+ "uu_shadow_core",
+ "uucore 0.9.0",
+]
+
+[[package]]
+name = "uu_groupmod"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e307b7b4441767f4c095987fff557b24891f5ec94099d19dee02e96431a29cb6"
+dependencies = [
+ "clap",
+ "rustix",
+ "uu_shadow_core",
+ "uucore 0.9.0",
+]
+
+[[package]]
 name = "uu_groups"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5268,6 +5415,17 @@ dependencies = [
  "fluent",
  "thiserror 2.0.20",
  "uucore 0.12.0",
+]
+
+[[package]]
+name = "uu_grpck"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38185766691130a3a4e772feefaf690d0547a60f6ef9884165fb314d5fb7187d"
+dependencies = [
+ "clap",
+ "uu_shadow_core",
+ "uucore 0.9.0",
 ]
 
 [[package]]
@@ -5509,6 +5667,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_newgrp"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d2fb2f3d73aaaaaf107f02de18a2c738b707f60dd5c4a861f1bfb8d471d5c84"
+dependencies = [
+ "clap",
+ "rustix",
+ "uu_shadow_core",
+ "uucore 0.9.0",
+ "zeroize",
+]
+
+[[package]]
 name = "uu_nice"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5590,6 +5761,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_passwd"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9deaa381b8180c7172052140dcae309c4e987a835692bbac391228143249da9"
+dependencies = [
+ "clap",
+ "rustix",
+ "uu_shadow_core",
+ "uucore 0.9.0",
+]
+
+[[package]]
 name = "uu_paste"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5658,6 +5841,17 @@ dependencies = [
  "clap",
  "fluent",
  "uucore 0.12.0",
+]
+
+[[package]]
+name = "uu_pwck"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb2673644eef7853348d7ecff8c412efc8e2aea90ef1c2ba6bb0b274239e32d2"
+dependencies = [
+ "clap",
+ "uu_shadow_core",
+ "uucore 0.9.0",
 ]
 
 [[package]]
@@ -5792,6 +5986,22 @@ dependencies = [
  "fluent",
  "uu_checksum_common",
  "uucore 0.12.0",
+]
+
+[[package]]
+name = "uu_shadow_core"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "816d46ae89e0d002793092518316b32f86dab41b3e2dd1fb385d2195387a0474"
+dependencies = [
+ "clap",
+ "landlock",
+ "libc",
+ "rustix",
+ "subtle",
+ "thiserror 2.0.20",
+ "uucore 0.9.0",
+ "zeroize",
 ]
 
 [[package]]
@@ -6147,6 +6357,42 @@ dependencies = [
  "clap",
  "fluent",
  "uucore 0.12.0",
+]
+
+[[package]]
+name = "uu_useradd"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52bac2214aa417ac27e57b11baf900814d3157ffccab89e6592ec0a7685bd9ab"
+dependencies = [
+ "clap",
+ "rustix",
+ "uu_shadow_core",
+ "uucore 0.9.0",
+]
+
+[[package]]
+name = "uu_userdel"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6383fd75b3ad4d0107feb9d39cb25361607cf244650d365dd01eb4bf595adb70"
+dependencies = [
+ "clap",
+ "rustix",
+ "uu_shadow_core",
+ "uucore 0.9.0",
+]
+
+[[package]]
+name = "uu_usermod"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc366a9afb53afd49b4fca462231f76590ecf555015379cbed746e2ce3da5e37"
+dependencies = [
+ "clap",
+ "rustix",
+ "uu_shadow_core",
+ "uucore 0.9.0",
 ]
 
 [[package]]

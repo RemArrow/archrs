@@ -220,6 +220,20 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "lsblk" => lsblk_cmd::run(args),
         "lspci" => lspci_cmd::run(args),
         "lsusb" => lsusb_cmd::run(args),
+        "passwd" => uu_passwd::uumain(args),
+        "useradd" => uu_useradd::uumain(args),
+        "userdel" => uu_userdel::uumain(args),
+        "usermod" => uu_usermod::uumain(args),
+        "chpasswd" => uu_chpasswd::uumain(args),
+        "chage" => uu_chage::uumain(args),
+        "groupadd" => uu_groupadd::uumain(args),
+        "groupdel" => uu_groupdel::uumain(args),
+        "groupmod" => uu_groupmod::uumain(args),
+        "grpck" => uu_grpck::uumain(args),
+        "pwck" => uu_pwck::uumain(args),
+        "chfn" => uu_chfn::uumain(args),
+        "chsh" => uu_chsh::uumain(args),
+        "newgrp" => uu_newgrp::uumain(args),
         _ => return None,
     })
 }
@@ -289,11 +303,27 @@ fn main() -> ExitCode {
     }
 
     let argv: Vec<OsString> = std::env::args_os().collect();
-    let exe_name = argv
+    let raw_exe_name = argv
         .first()
         .and_then(|a| std::path::Path::new(a).file_name())
         .and_then(|n| n.to_str())
         .unwrap_or("coreutils-rs")
+        .to_string();
+    // A login shell is conventionally exec'd with argv[0] prefixed with
+    // "-" (e.g. `-sh`, `-bash`) — done by `login`, `su - user`, `sudo -i`,
+    // display managers, etc. — a signal to the shell itself to behave as
+    // a login shell, not a different utility name. Strip it before
+    // matching against UTILS so `su - testuser` (whose real shell exec
+    // this project's own `su` sets up exactly this way) actually finds
+    // our `sh`/`bash` dispatch instead of falling through to the
+    // `coreutils-rs <utility>` convention and misreading the shell's own
+    // `-c` flag as a utility name. The real argv (still `-sh`) is left
+    // untouched for the "sh"/"bash" dispatch arm below, which reads real
+    // process argv itself via `brush_shell::entry::run()` and needs the
+    // leading `-` to know it's a login shell.
+    let exe_name = raw_exe_name
+        .strip_prefix('-')
+        .unwrap_or(&raw_exe_name)
         .to_string();
 
     // Symlink form: argv[0] is already the utility name (e.g. `ls`).

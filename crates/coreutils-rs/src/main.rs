@@ -34,6 +34,8 @@ mod gzip_cmd;
 mod ip_cmd;
 mod less_cmd;
 mod lsblk_cmd;
+mod lspci_cmd;
+mod lsusb_cmd;
 mod mount_cmd;
 mod patch_cmd;
 mod ping_cmd;
@@ -216,6 +218,8 @@ fn dispatch(name: &str, args: IntoIter<OsString>) -> Option<i32> {
         "ss" => ss_cmd::run(args),
         "ip" => ip_cmd::run(args),
         "lsblk" => lsblk_cmd::run(args),
+        "lspci" => lspci_cmd::run(args),
+        "lsusb" => lsusb_cmd::run(args),
         _ => return None,
     })
 }

@@ -1045,7 +1045,7 @@ write operation remain open if a real need for them shows up, on the
 same "not needed yet, not impossible" footing as Phase 5's own closing
 boundary.
 
-### Phase 7 — storage visibility (in progress)
+### Phase 7 — storage/device visibility (complete)
 Picks up `lsblk` from Phase 5's closing list — it was originally
 grouped there with `lspci`/`lsusb` under "needs a vendor/device ID
 database," but that's only true for those two (`pci.ids`/`usb.ids`);
@@ -1092,10 +1092,45 @@ database," but that's only true for those two (`pci.ids`/`usb.ids`);
       `libblkid`), `-o` (custom columns), `-J`/`-P` (JSON/pairs
       output), device-mapper/LVM/RAID relationship trees.
 
-Still open for this phase: `lspci`/`lsusb` — these genuinely do need a
-vendor/device ID database (`pci.ids`/`usb.ids`) this project has no
-copy of and no clear source to vendor cleanly, the real distinction
-Phase 5's closing note was pointing at.
+- [x] `lspci`/`lsusb` — the vendor/device ID database each genuinely
+      needs turned out to have a clean vendoring source after all:
+      the `pci-ids`/`usb-ids` crates embed the real PCI/USB ID
+      Repository databases (`pci.ids`/`usb.ids`) at compile time, the
+      same databases real `lspci`/`lsusb` read from disk (usually
+      `/usr/share/hwdata/` on Arch) — just compiled in instead of
+      depending on that file being installed. Device enumeration
+      itself needs no crate: a direct `/sys/bus/pci/devices/*` /
+      `/sys/bus/usb/devices/*` read, same as `lsblk`.
+      `lspci` (default output) came out byte-for-byte identical to
+      real `lspci` on this dev machine (every bus address, class,
+      vendor, device name, and revision, across ~25 real devices)
+      after one real fix caught by diffing: real `lspci` omits the
+      `(rev NN)` suffix entirely when the revision is `0` (its
+      "nothing meaningful to report" value) — the first version always
+      printed `(rev 00)`, confirmed wrong on two real devices (an NVMe
+      controller and an Intel signal-processing device) before being
+      fixed to match.
+      `lsusb` matched real `lsusb` for every device's bus/device
+      number and vendor:product ID, and for most device names — two
+      real devices on this machine (a Wacom touch sensor, an IMC
+      Networks camera) resolved their vendor name but not their exact
+      product name, confirmed by querying the vendored database
+      directly to be a real database-currency gap (that specific
+      product ID isn't in the crate's `usb.ids` snapshot yet, though
+      the vendor ID is), not a lookup bug. Falls back to vendor-name-
+      only rather than blank in that case.
+      Both verified a second way too: run from the real boot test
+      against the VM's own, genuinely different hardware (virtio-blk/
+      virtio-net PCI devices, no USB bus at all) — both exit cleanly
+      with real output rather than crashing on unfamiliar topology.
+      Not implemented: `-v`/`-vv`/`-k` (verbose PCI details, kernel
+      driver), `-n`/`-nn` (numeric IDs), `-t` (USB tree view), `-d`
+      (filter by vendor:product).
+
+This closes Phase 5's original closing-list item cleanly: the
+`lspci`/`lsusb` "needs a database" distinction turned out to have a
+real, clean answer (vendor the ID-repository crates) rather than being
+a permanent gap.
 
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,

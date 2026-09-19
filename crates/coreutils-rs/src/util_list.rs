@@ -200,4 +200,11 @@ const UTILS: &[(&str, &str)] = &[
     // `lsblk` (util-linux) — reads /sys/block directly, no crate
     // needed for the default column set — see lsblk_cmd.rs.
     ("lsblk", "archrs-native"),
+    // `lspci`/`lsusb` — the only Phase 5/6/7 additions that actually
+    // need a vendor/device ID database (`pci.ids`/`usb.ids`), unlike
+    // /proc/sys-only tools like lsblk/ss/dmesg. Vendors the `pci-ids`/
+    // `usb-ids` crates, which embed the real database at compile
+    // time — see lspci_cmd.rs/lsusb_cmd.rs.
+    ("lspci", "archrs-native"),
+    ("lsusb", "archrs-native"),
 ];

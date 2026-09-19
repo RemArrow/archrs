@@ -105,7 +105,8 @@ echo
 echo "ARCHRS-BOOT-TEST: lsblk:"
 lsblk | tr '\n' '|'
 echo
-echo
+echo "ARCHRS-BOOT-TEST: lspci exit code: $(lspci >/dev/null 2>&1; echo $?)"
+echo "ARCHRS-BOOT-TEST: lsusb exit code: $(lsusb >/dev/null 2>&1; echo $?)"
 echo "ARCHRS-BOOT-TEST: all checks complete, powering off"
 kill -USR2 1
 sleep 5
@@ -163,6 +164,8 @@ check "ARCHRS-BOOT-TEST: tmpfs unmounted: 0"
 check "1: lo: <LOOPBACK>"
 check "vda         254:0"
 check "1G 0  disk /|"
+check "ARCHRS-BOOT-TEST: lspci exit code: 0"
+check "ARCHRS-BOOT-TEST: lsusb exit code: 0"
 check "archrs-init: powering off"
 check "reboot: Power down"
 

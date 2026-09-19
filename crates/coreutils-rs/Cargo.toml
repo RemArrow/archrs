@@ -40,6 +40,8 @@ nix = { version = "0.31", features = ["mount"] }
 netlink-sys = "0.9"
 netlink-packet-core = "0.9"
 netlink-packet-route = "0.33"
+pci-ids = "0.2"
+usb-ids = "1"
 uu_ls = "0.12"
 uu_cat = "0.12"
 uu_cp = "0.12"

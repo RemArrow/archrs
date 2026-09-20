@@ -136,9 +136,24 @@ pub fn run_modprobe(mut args: IntoIter<OsString>) -> i32 {
     let mut remove = false;
     let mut name = None;
     let mut opts = Vec::new();
+    // Real callers of modprobe outside a human typing it never pass just
+    // `modprobe MODULE`. The kernel's own module autoloader
+    // (`request_module()`, confirmed against `kernel/kmod.c`, not
+    // assumed) execs `modprobe -q -- MODULE`; real systemd's own
+    // generated `modprobe@.service` template execs `modprobe -abq
+    // MODULE` (`-a`/`-b`/`-q` bundled into one token) — both found the
+    // hard way, from two different real flags each landing `name` on the
+    // flag string itself instead of the module (`-q` treated as a
+    // not-found module the first time, `-abq` the second). Real
+    // modprobe's own options are always `-`-prefixed; a module's own
+    // extra parameters (`size=1M`-style) never start with `-`, so
+    // treating every `-`-prefixed token except `-r`/`--remove` as an
+    // ignorable flag — not enumerating each one — covers whatever
+    // combination a real caller bundles, not just the two seen so far.
     for arg in args {
         match arg.to_str() {
             Some("-r") | Some("--remove") => remove = true,
+            Some(s) if s.starts_with('-') => {}
             _ if name.is_none() => name = Some(arg.to_string_lossy().into_owned()),
             _ => opts.push(arg.to_string_lossy().into_owned()),
         }
@@ -163,6 +178,38 @@ pub fn run_modprobe(mut args: IntoIter<OsString>) -> i32 {
     let opt_refs: Vec<&str> = opts.iter().map(String::as_str).collect();
     for module in modules {
         found = true;
+        // Real modprobe's whole reason for existing over bare `insmod` is
+        // loading dependencies first — found the hard way: `insert_module`
+        // alone got `vfat.ko` a real, immediate load failure ("Unknown
+        // symbol fat_parse_param", "Unknown symbol fat_dir_empty", ...,
+        // one per symbol `vfat` imports from `fat.ko`) because `fat.ko`
+        // was never loaded first, which then surfaced as `mount -t vfat`
+        // failing with `ENODEV` — the module "loaded" (insert_module
+        // returned before the kernel's own link step could fail it
+        // synchronously) but never actually registered the filesystem.
+        // `depmod` already computes each module's full transitive
+        // dependency closure, in load order, into `modules.dep` — that's
+        // exactly what `dependencies()` returns here, so no recursion of
+        // our own is needed, just inserting them first in the order
+        // given.
+        if !remove {
+            for dep in module.dependencies() {
+                let dep_result = dep.insert_module(0, &[]);
+                let dep_already_loaded = matches!(
+                    &dep_result,
+                    Err(kmod::Error::InsertModule(errno)) if errno.0 == libc::EEXIST
+                );
+                if let Err(e) = dep_result
+                    && !dep_already_loaded
+                {
+                    eprintln!(
+                        "modprobe: could not insert '{name}': dependency {:?} failed: {e}",
+                        dep.name()
+                    );
+                    return 1;
+                }
+            }
+        }
         let result = if remove {
             module.remove_module(0)
         } else {

@@ -109,6 +109,30 @@ struct Cli {
     /// haven't triple-checked yourself.
     #[arg(long)]
     yes_i_am_sure: bool,
+
+    /// Set this as the root account's password. Real `shadow` ships
+    /// root locked by default (confirmed for real: `root:*:...` in a
+    /// built image's own `/etc/shadow`, and `sulogin` refusing even
+    /// emergency-mode console access as a result) — omit this and
+    /// archrs-install generates a random one and prints it once, so a
+    /// fresh install is never silently unrecoverable.
+    #[arg(long)]
+    root_password: Option<String>,
+}
+
+/// Real entropy, not a PRNG seeded from time/pid — `/dev/urandom` is
+/// already guaranteed present (it's the kernel's own device node, not
+/// something a package installs), so this needs no new dependency.
+/// Hex-encoded rather than raw bytes so the printed password is safe to
+/// read off a terminal and retype by hand.
+fn generate_password() -> Result<String> {
+    use std::io::Read;
+    let mut buf = [0u8; 12];
+    std::fs::File::open("/dev/urandom")
+        .context("opening /dev/urandom")?
+        .read_exact(&mut buf)
+        .context("reading /dev/urandom")?;
+    Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 fn require_root() -> Result<()> {
@@ -156,10 +180,22 @@ fn main() -> Result<()> {
         _ => unreachable!("checked above"),
     };
 
-    let result = run_install(&device_path, size_bytes, &mountpoint);
+    let (root_password, password_was_generated) = match cli.root_password {
+        Some(p) => (p, false),
+        None => (generate_password()?, true),
+    };
+
+    let result = run_install(&device_path, size_bytes, &mountpoint, &root_password);
 
     if let Some(loop_dev) = &loop_dev {
         let _ = device::detach_loop(loop_dev);
+    }
+
+    if result.is_ok() && password_was_generated {
+        println!(
+            "archrs-install: generated root password (no --root-password given): {root_password}"
+        );
+        println!("archrs-install: log in as root with it and change it with 'passwd' — this is the only copy");
     }
 
     result
@@ -169,6 +205,7 @@ fn run_install(
     device_path: &std::path::Path,
     size_bytes: u64,
     mountpoint: &std::path::Path,
+    root_password: &str,
 ) -> Result<()> {
     println!("archrs-install: partitioning {device_path:?}...");
     let layout = device::partition(device_path, size_bytes)?;
@@ -201,6 +238,9 @@ fn run_install(
 
         println!("archrs-install: enabling systemd services...");
         build::enable_services(mountpoint)?;
+
+        println!("archrs-install: setting root password...");
+        build::set_root_password(mountpoint, root_password)?;
 
         Ok(())
     })();

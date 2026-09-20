@@ -53,6 +53,17 @@ fn parse_options(opts: &str) -> (MsFlags, Vec<&str>) {
             "atime" => flags.remove(MsFlags::MS_NOATIME),
             "relatime" => flags.insert(MsFlags::MS_RELATIME),
             "norelatime" => flags.remove(MsFlags::MS_RELATIME),
+            // Found the hard way: real systemd's generated `tmp.mount`
+            // (`/etc/fstab`-independent, systemd's own built-in default
+            // for `/tmp`) passes `strictatime` explicitly — with nothing
+            // recognizing it, it fell all the way through to "opaque
+            // filesystem data" and got handed to `tmpfs`'s own option
+            // parser as a bare flag it doesn't understand, which
+            // rejected it outright (`EINVAL`, kernel log: "tmpfs: Unknown
+            // parameter 'strictatime'"), which surfaced here as
+            // `mounting on /tmp failed: EINVAL`.
+            "strictatime" => flags.insert(MsFlags::MS_STRICTATIME),
+            "nostrictatime" => flags.remove(MsFlags::MS_STRICTATIME),
             "sync" => flags.insert(MsFlags::MS_SYNCHRONOUS),
             "async" => flags.remove(MsFlags::MS_SYNCHRONOUS),
             "remount" => flags.insert(MsFlags::MS_REMOUNT),
@@ -116,17 +127,33 @@ pub fn run_mount(args: IntoIter<OsString>) -> i32 {
     if positional.is_empty() {
         return list_mounts();
     }
-    if positional.len() != 2 {
-        eprintln!("mount: usage: mount SOURCE TARGET [-t FSTYPE] [-o OPTIONS]");
-        return 2;
-    }
-    let source = &positional[0];
-    let target = &positional[1];
 
     let (flags, data) = match &options {
         Some(o) => parse_options(o),
         None => (MsFlags::empty(), Vec::new()),
     };
+
+    // Real `mount(8)`'s single-argument form — `mount -o remount,rw /` —
+    // takes just the already-mounted target, not a source; the kernel's
+    // own `mount(2)` for `MS_REMOUNT` identifies the superblock purely by
+    // target and ignores the source string's contents (real `mount`
+    // itself just resends whatever `/proc/mounts` lists there). Found
+    // the hard way: real `systemd-remount-fs.service` execs exactly this
+    // one-argument form for `/`, and this only ever accepted the real
+    // two-argument `SOURCE TARGET` form, rejecting it as a usage error.
+    let (source, target): (String, &String) = if positional.len() == 1 {
+        if !flags.contains(MsFlags::MS_REMOUNT) {
+            eprintln!("mount: usage: mount SOURCE TARGET [-t FSTYPE] [-o OPTIONS]");
+            return 2;
+        }
+        ("none".to_string(), &positional[0])
+    } else if positional.len() == 2 {
+        (positional[0].clone(), &positional[1])
+    } else {
+        eprintln!("mount: usage: mount SOURCE TARGET [-t FSTYPE] [-o OPTIONS]");
+        return 2;
+    };
+    let source = &source;
     let data_str = if data.is_empty() {
         None
     } else {
@@ -156,6 +183,20 @@ pub fn run_umount(args: IntoIter<OsString>) -> i32 {
         match arg.as_str() {
             "-f" | "--force" => flags.insert(MntFlags::MNT_FORCE),
             "-l" | "--lazy" => flags.insert(MntFlags::MNT_DETACH),
+            // Real systemd execs its own generated `.mount` units'
+            // `ExecUnmount` as `umount -c TARGET` — found the hard way:
+            // every real shutdown failed to unmount `/boot`/`/tmp`
+            // ("umount: -c: ENOENT"), because `-c` wasn't recognized
+            // here and got treated as the target path itself instead of
+            // a flag. `-c`/`--no-canonicalize` tells real `umount` not
+            // to canonicalize the target before looking it up (real
+            // `umount(8)` does this so a mountpoint that's already
+            // partway torn down, or a symlink component that no longer
+            // resolves, doesn't block unmounting it) — this
+            // implementation already passes the target straight to
+            // `umount2` uncanonicalized, so it's accepted and ignored
+            // rather than implemented.
+            "-c" | "--no-canonicalize" => {}
             other => target = Some(other.to_string()),
         }
     }

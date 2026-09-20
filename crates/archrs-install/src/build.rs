@@ -79,6 +79,15 @@ const BASE_PACKAGES: &[&str] = &[
     "grub",
     "systemd",
     "dbus",
+    // `fsck.vfat` — found the hard way by actually booting a real
+    // install: without it, `systemd-fsck@.service` for the ESP (fstab
+    // checks it, fsck pass "2") has no checker to exec for a `vfat`
+    // filesystem at all, and the resulting `boot.mount` job sat stalled
+    // until systemd's own default job timeout, dropping the boot into
+    // emergency mode. `fsck`/`systemd-fsck` themselves come from
+    // `util-linux`/`systemd` above; the actual `fsck.vfat` binary is
+    // `dosfstools`'s alone.
+    "dosfstools",
 ];
 
 /// Vanilla Arch ships a plain `linux` metapackage; Manjaro doesn't —
@@ -278,6 +287,39 @@ pub fn write_grub_cfg(rootfs_dir: &Path, root_guid: uuid::Uuid) -> Result<()> {
     );
     std::fs::create_dir_all(rootfs_dir.join("boot/grub"))?;
     std::fs::write(rootfs_dir.join("boot/grub/grub.cfg"), cfg)?;
+    Ok(())
+}
+
+/// Real `shadow` ships root's own `/etc/shadow` entry locked (`root:*:...`
+/// on this dev machine's own build, confirmed directly by reading it back
+/// out of a built image with `debugfs`) — there's no install hook to
+/// unlock it, the same class of gap as `systemd-firstboot` above. Left
+/// alone, that's not just "no root login": `sulogin` (real emergency-mode
+/// console, real single-user mode) refuses outright with "Cannot open
+/// access to console, the root account is locked" — confirmed for real by
+/// actually landing a build in emergency mode (the `dosfstools` gap above)
+/// and finding there was no way in at all, not even to diagnose it. Uses
+/// real `chpasswd --root DIR`, the same chroot-free-offline-root pattern
+/// `systemctl --root=` uses elsewhere in this file — not a hand-rolled
+/// shadow-file edit.
+pub fn set_root_password(rootfs_dir: &Path, password: &str) -> Result<()> {
+    use std::io::Write;
+    let mut child = Command::new("chpasswd")
+        .arg("--root")
+        .arg(rootfs_dir)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .context("spawning chpasswd")?;
+    child
+        .stdin
+        .take()
+        .context("chpasswd has no stdin")?
+        .write_all(format!("root:{password}\n").as_bytes())
+        .context("writing to chpasswd's stdin")?;
+    let status = child.wait().context("waiting for chpasswd")?;
+    if !status.success() {
+        bail!("chpasswd failed: {status}");
+    }
     Ok(())
 }
 

@@ -2153,6 +2153,207 @@ bespoke signal-to-PID-1 scheme.
       genuine fidelity improvement to update a check for, not a
       regression to paper over.
 
+### Phase 14 — actually booting a real `archrs-install` image (complete)
+Every earlier phase's own testing boots this project's *test* images
+(`-kernel` direct boot, no ESP, no real `/etc/fstab` mount, no real
+GRUB/OVMF). This phase is the first time `archrs-install`'s own actual
+output was booted for real end to end (QEMU + real OVMF UEFI firmware,
+real GRUB reading the real ESP, real `systemd` mounting a real
+`/etc/fstab`) — and it surfaced three more real, previously-unreachable
+bugs, found by actually booting and diagnosing, not by inspection:
+
+- **`fsck.vfat` was never installed.** `/etc/fstab` schedules a real
+  fsck pass on the ESP; `systemd-fsck@boot.service` had no checker to
+  exec for `vfat` at all, and `boot.mount`'s job sat stalled until
+  systemd's own default job timeout, dropping the boot into emergency
+  mode. `dosfstools` (the package that actually ships `fsck.vfat`) was
+  missing from `BASE_PACKAGES` — added.
+- **Root's own account ships locked** (`root:*:...`, confirmed by
+  reading a built image's real `/etc/shadow` back with `debugfs`) with
+  no install step ever unlocking it — so when the `/boot` failure above
+  *did* land the boot in emergency mode, `sulogin` refused console
+  access outright ("the root account is locked"), leaving no way in at
+  all, not even to diagnose the first bug. `archrs-install` now sets a
+  real root password via `chpasswd --root DIR` (`build::
+  set_root_password`) — `--root-password PASS`, or a random one
+  generated and printed once if omitted, so a fresh install is never
+  silently unrecoverable.
+- **The real bug underneath both of the above, found only after fixing
+  them enough to reach a working `journalctl`**: with `dosfstools`
+  installed, `/boot` stopped *hanging* but still failed outright —
+  `mount: ...: mounting on /boot failed: ENODEV`. Root-caused (not
+  guessed) by extracting the image's own persisted journal straight off
+  the ext4 partition with `debugfs -R rdump` (no mount, no root needed
+  for a read-only file this project already owns) and reading it with
+  real `journalctl --file=...`: `mount(2)`'s `ENODEV` for an unknown fs
+  type means the kernel's own on-demand module autoload
+  (`request_module("vfat")`) failed. That autoload really does exec
+  `/sbin/modprobe -q -- vfat` (confirmed straight from the kernel's own
+  `kmod.c`, not assumed) — and this project's own `modprobe`
+  (`kmod_cmd.rs`, dispatched exactly like every other coreutils-rs
+  utility, which is what real `/sbin/modprobe` now resolves to) didn't
+  understand `-q` or `--` at all, so it treated the literal string
+  `"-q"` as the module name, found nothing, and failed — reproduced
+  directly on the host with `coreutils-rs modprobe -q -- vfat` before
+  touching the fix. This is exactly the gap `kmod_cmd.rs`'s own doc
+  comment already flagged as unverified ("not exercised end to end...
+  no way to build a real loadable `.ko`" — true for *manual* modprobe
+  calls, but the kernel's own automatic autoload path was reachable
+  all along and had never actually been exercised). Fixed by accepting
+  and ignoring `-q`/`--quiet` and treating `--` as an end-of-options
+  marker, matching real `modprobe`'s own CLI.
+
+Fixing the `modprobe` arg-parsing bug immediately surfaced two more
+real bugs underneath it, both found by rebuilding and booting again
+rather than assuming the first fix was enough:
+
+- **Real `systemd`'s own generated `modprobe@.service` template
+  (`modprobe@tun.service`, seen loading `tun` at boot) execs `modprobe
+  -abq MODULE`** — a *different* flag shape than the kernel's own `-q
+  --` (bundled single-dash short options, not a separate `--`
+  marker) — and hit the exact same class of bug again: `-abq` got
+  treated as the module name. Generalized the fix instead of patching
+  another exact string: any `-`-prefixed token other than `-r`/
+  `--remove` is now treated as an ignorable flag (real modprobe options
+  are always `-`-prefixed; a module's own extra parameters never are),
+  so whatever combination a real caller bundles is covered, not just
+  the two shapes actually seen.
+- **The real, final cause of `/boot` itself failing**: with argument
+  parsing fixed, `vfat.ko` genuinely got exec'd — and immediately
+  failed to link, real kernel log included: `vfat: Unknown symbol
+  fat_parse_param (err -2)` repeated for every symbol `vfat.ko` imports
+  from `fat.ko`, because `fat.ko` (its real kernel module dependency)
+  was never loaded first. `insert_module` alone is `insmod`'s job, not
+  modprobe's — modprobe's entire reason to exist over bare `insmod` is
+  loading dependencies first, and this project's own `modprobe` wasn't
+  doing that at all. Fixed by walking `Module::dependencies()` (the
+  `kmod` crate's own binding to `kmod_module_get_dependencies`) and
+  inserting each one first, tolerating "already loaded" the same way
+  the target module itself already did; no recursion needed since real
+  `depmod` already flattens each module's full transitive dependency
+  chain, in load order, into `modules.dep` itself.
+
+All of these were found the same way: boot it for real, read the real
+error (`journalctl` against the image's own persisted journal,
+extracted straight off the ext4 partition with `debugfs -R rdump` and
+read locally — no live shell needed, sidestepping a separate known
+`brush`-under-`sulogin` DSR-crash issue hit along the way), fix the
+real cause, rebuild, boot again. `dosfstools`'s absence alone would
+have made every future kernel/bootloader update on a real install
+silently stop being possible; the two `modprobe` bugs together meant
+*no* on-demand kernel module with a real dependency (not just `vfat`)
+could ever load correctly on a real install, only whatever happened to
+already be built into the exact kernel being tested.
+
+With all four of the above fixed, the real image boots end to end for
+the first time — real GRUB reads the real ESP, real `mkinitcpio`
+initramfs finds and switches to the real root by `PARTUUID`, real
+`systemd` reaches a real `archrs login:` prompt, root logs in with the
+password `archrs-install` set, `/boot` shows up genuinely mounted
+(`... on /boot type vfat (rw,relatime,...)`), and `poweroff` shuts the
+VM down cleanly. Two more real, non-fatal bugs turned up rebuilding
+and re-verifying this rather than declaring it done at the first clean
+boot:
+
+- **`tmp.mount` (real systemd's own built-in default unit for `/tmp`,
+  not anything in this project's own fstab) failed**: `mount: tmpfs:
+  mounting on /tmp failed: EINVAL` (kernel log: `tmpfs: Unknown
+  parameter 'strictatime'`). This project's own `mount` (`mount_cmd.rs`
+  — real `mount(2)` via `nix`, standing in for `/usr/bin/mount` the
+  same way `modprobe` stands in for `/sbin/modprobe`) didn't recognize
+  `strictatime` as an option at all, so it fell through to "opaque
+  filesystem data" and got handed to `tmpfs`'s own kernel-side parser
+  as a bare flag it doesn't understand. Added `strictatime`/
+  `nostrictatime` alongside the existing `atime`/`noatime`/`relatime`
+  handling (`nix`'s `MsFlags::MS_STRICTATIME` already existed — this
+  was a missing match arm, not a missing capability).
+- **`systemd-remount-fs.service` failed**: `mount: usage: mount SOURCE
+  TARGET [-t FSTYPE] [-o OPTIONS]`. Real `mount(8)`'s one-argument
+  remount form — `mount -o remount,rw /` — passes only the already-
+  mounted target, not a source (the kernel's own `MS_REMOUNT` path
+  identifies the superblock purely by target and ignores the source
+  string's actual contents); this project's own `mount` only ever
+  accepted the two-argument `SOURCE TARGET` form and rejected the
+  one-argument form as a usage error before ever reaching `mount(2)`.
+  Fixed by accepting a single positional argument specifically when
+  `-o` includes `remount`, using a placeholder source (real `mount(2)`
+  doesn't use it for a remount) — still a hard usage error for a bare
+  single argument without `remount`, matching real `mount(8)`.
+
+Neither blocks reaching a working login prompt (both units are best-
+effort, non-blocking by design in real systemd too), which is why they
+surfaced only on a second, closer read of an already-"successful" boot
+rather than in the first pass — a reminder to keep checking for FAILED
+lines even after the headline goal (a login prompt) is reached, not
+stop at the first success.
+
+With both of those fixed too, boot itself was completely clean — but
+`poweroff` afterward wasn't: `Failed unmounting /boot` and `Failed
+unmounting Temporary Directory /tmp`, real journal (extracted from the
+same boot's own persisted journal, same technique as above) showing
+`umount: -c: ENOENT: No such file or directory`. Real systemd's
+generated `.mount` units unmount via `umount -c TARGET`, not just
+`umount TARGET` — `-c`/`--no-canonicalize` tells real `umount(8)` not
+to canonicalize the target path first (so a mountpoint that's already
+partway torn down at shutdown doesn't block unmounting it), and this
+project's own `umount` (`mount_cmd.rs`) didn't recognize it as a flag
+at all, so `-c` itself got treated as the target — `umount2("-c",
+...)` then genuinely failed with `ENOENT`. Same fix shape as
+`mount`'s own gaps above: accepted and ignored (this implementation
+already never canonicalizes the target, so `-c` was already its
+default behavior, just not spelled out as an accepted flag). This was
+the fourth distinct real gap found in this project's own `mount`/
+`umount`/`modprobe` — all four sharing the same actual root cause:
+each one had only ever been tested against *hand-typed*, minimal
+invocations, never against the exact argv shapes real systemd/the
+kernel itself actually use when driving them automatically.
+
+### Chasing the `brush` "cursor position could not be read" crash
+`login-test-driver.py`'s own comments already documented this crash —
+`brush` (this project's own shell) dying right after a command
+finishes, mid-prompt-redraw, with crossterm's real error text — as
+something that happens "sometimes... even though `expect`'s own read
+loop answers it," treated as a pre-existing, not-fully-understood
+flakiness to work around rather than a fixed root cause. Chased it
+properly this time instead of working around it again:
+
+Read real `crossterm` 0.29.0's own source
+(`src/cursor/sys/unix.rs::read_position_raw`): `cursor::position()`
+writes `\x1B[6n` and polls for a reply with a **fixed 2000ms timeout**
+before returning the exact error text seen crashing `brush`. Read real
+`reedline` 0.47.0's own source (`src/painting/painter.rs`) next:
+redrawing a prompt calls `cursor::position()` **twice**, independently
+— once in `initialize_prompt_position()`, once more in
+`repaint_buffer()`'s own `is_reset()` closure — meaning a single
+prompt redraw genuinely sends *two* separate `\x1B[6n` queries, each
+expecting its own separate reply, not one query serving both.
+
+Both `login-test-driver.py` and this session's own throwaway QEMU test
+driver reply to a DSR query with `if DSR_CURSOR_QUERY in chunk: send
+one reply` — checking presence, not counting occurrences. When both of
+reedline's queries land in the same `recv()` read (the common case,
+since they're sent microseconds apart from the same process), only one
+of the two outstanding queries ever gets answered; the second's own
+`cursor::position()` call is left genuinely waiting out crossterm's
+full 2-second timeout before erroring — exactly the observed crash,
+and exactly why it looked like "sometimes" flakiness rather than a
+deterministic bug: it depends on which redraws happen to burst two
+queries into one read versus two separate ones.
+
+This is **not a bug in `archrs`, `brush`, or `reedline`** — both are
+doing exactly what their own source says they do, and a real terminal
+(minicom, screen, a physical console's own VT) would never have this
+problem, because real terminal emulation answers every `\x1B[6n` it
+parses as it parses it, not once per arbitrary `read()` chunk boundary
+a test harness happens to see. It was a fidelity gap in this project's
+own *test tooling*. Fixed in `login-test-driver.py`'s `expect()`/
+`drain()` (`chunk.count(DSR_CURSOR_QUERY)` replies, not one `if`
+check) — confirmed for real: with the identical fix applied to a
+throwaway driver and run twice against the real `archrs-install`
+image, the crash text never reappeared, and `poweroff` still
+completed and powered the VM off cleanly both times (proven by the
+QEMU process itself exiting on its own, not just by log text).
+
 ## Non-goals
 Rewriting every package in the Arch repos (tens of thousands of packages,
 most already upstream projects in their own languages) is not a software

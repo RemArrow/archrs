@@ -64,7 +64,22 @@ def expect(sock, patterns, timeout=45):
             # comes (confirmed for real: brush printed "input error
             # occurred: The cursor position could not be read" and its
             # session died before this was added).
-            if DSR_CURSOR_QUERY in chunk:
+            #
+            # One reply per *occurrence*, not per chunk: `reedline`
+            # (brush's line editor) genuinely sends two independent
+            # queries back to back when redrawing a prompt —
+            # `initialize_prompt_position()` and `repaint_buffer()`'s own
+            # `is_reset()` check each call `crossterm::cursor::position()`
+            # separately — and both regularly land in the same `recv()`
+            # read. Replying only once per chunk (`if ... in chunk`)
+            # leaves the second query's own caller blocked for
+            # crossterm's fixed 2000ms timeout, which is the exact,
+            # confirmed cause of brush's own "cursor position could not
+            # be read" crash right after a command finishes: not a bug
+            # in `archrs`/`brush`/`reedline`, just this driver not being
+            # a faithful enough terminal (a real one answers every query
+            # it parses, not once per read).
+            for _ in range(chunk.count(DSR_CURSOR_QUERY)):
                 sock.sendall(DSR_CURSOR_REPLY)
         for i, p in enumerate(patterns):
             if p in buf:
@@ -103,7 +118,10 @@ def drain(sock, duration=1.5):
                 break
             sys.stdout.write(chunk.decode(errors="replace"))
             sys.stdout.flush()
-            if DSR_CURSOR_QUERY in chunk:
+            # See `expect`'s own comment: one reply per occurrence, not
+            # per chunk — `reedline` can send two independent queries
+            # back to back.
+            for _ in range(chunk.count(DSR_CURSOR_QUERY)):
                 sock.sendall(DSR_CURSOR_REPLY)
             buf += chunk
     return buf
